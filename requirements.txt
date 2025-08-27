@@ -1,0 +1,7 @@
+discord.py==2.3.2
+ aiofiles==23.2.1
+ python-dotenv==1.0.0
+ requests==2.31.0
+ Websockets==12.0
+ Pillow==10.4.0
+ pygame==2.5.2
