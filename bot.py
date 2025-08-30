@@ -1145,7 +1145,7 @@ async def key_info(interaction: discord.Interaction, key: str):
 async def backup_keys(interaction: discord.Interaction):
 	"""Create a backup of all keys"""
 	# Special admin only
-		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+	await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
 		return
