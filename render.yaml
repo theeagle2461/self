@@ -1,6 +1,6 @@
-Services:
+services:
    - type: web
-     Name: discord-key-bot
+     name: self
      env: python
      plan: free
      buildCommand: pip install -r requirements.txt
@@ -11,5 +11,5 @@ Services:
        - key: PYTHON_VERSION
          value: 3.12.4
        - key: GUILD_ID
-         Value: 1402622761246916628
+         value: 1402622761246916628
      healthCheckPath: /
