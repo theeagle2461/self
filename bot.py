@@ -3191,6 +3191,95 @@ def start_health_check():
 async def on_error(event, *args, **kwargs):
     print(f"❌ Error in {event}: {args}")
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="listcommands", description="List registered application commands (debug)")
+async def listcommands(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=True)
+        cmds = bot.tree.get_commands(guild=discord.Object(id=GUILD_ID))
+        names = [c.name for c in cmds]
+        await interaction.followup.send("\n".join(names) or "(no commands)")
+    except Exception as e:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"Error: {e}")
+        else:
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="backupchannel", description="Set the channel to auto-backup keys and auto-restore on deploy")
+async def set_backup_channel_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
+    try:
+        global BACKUP_CHANNEL_ID
+        BACKUP_CHANNEL_ID = int(channel.id)
+        CONFIG['BACKUP_CHANNEL_ID'] = BACKUP_CHANNEL_ID
+        save_config()
+        await interaction.response.send_message(f"✅ Backup channel set to {channel.mention}.", ephemeral=True)
+        # Ensure backup loop is running
+        try:
+            if not periodic_backup_task.is_running():
+                periodic_backup_task.start()
+        except Exception:
+            pass
+        # Optional immediate backup
+        try:
+            payload = key_manager.build_backup_payload()
+            data = json.dumps(payload, indent=2).encode()
+            file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
+            await channel.send(content="Manual backup after setting channel", file=file)
+        except Exception:
+            pass
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to set backup channel: {e}", ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="keylogs", description="Show recent key logs (last 15)")
+async def keylogs(interaction: discord.Interaction):
+    if not await check_permissions(interaction):
+        return
+    logs = list(reversed(key_manager.key_logs[-15:]))
+    if not logs:
+        await interaction.response.send_message("📭 No logs yet.", ephemeral=True)
+        return
+    lines = []
+    for e in logs:
+        when = f"<t:{e.get('ts',0)}:R>"
+        event = e.get('event','?')
+        key = e.get('key','')
+        uid = e.get('user_id')
+        lines.append(f"{when} — {event.upper()} — `{key}` — {('<@'+str(uid)+'>') if uid else ''}")
+    embed = discord.Embed(title="📝 Recent Key Logs", description="\n".join(lines), color=0x8b5cf6)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="leaderboard", description="Show the top users by key usage")
+async def leaderboard(interaction: discord.Interaction):
+    """Show the top users by key usage"""
+    # Remove special admin check so everyone can use this command
+
+    # Aggregate usage by user_id
+    usage = key_manager.key_usage
+    user_counts = {}
+    for key, data in usage.items():
+        uid = key_manager.keys.get(key, {}).get("user_id", 0)
+        if uid:
+            user_counts[uid] = user_counts.get(uid, 0) + data.get("usage_count", 0)
+
+    # Sort and get top 10
+    top = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    if not top:
+        await interaction.response.send_message("No usage data yet.", ephemeral=True)
+        return
+
+    lines = []
+    for idx, (uid, count) in enumerate(top, start=1):
+        lines.append(f"**{idx}.** <@{uid}> — `{count}` uses")
+
+    embed = discord.Embed(
+        title="🏆 Key Usage Leaderboard",
+        description="\n".join(lines),
+        color=0xFFD700
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Run the bot
 if __name__ == "__main__":
@@ -3238,57 +3327,7 @@ async def purge_global_commands():
     except Exception as e:
         print(f"⚠️ Failed to purge global commands: {e}")
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="keylogs", description="Show recent key logs (last 15)")
-async def keylogs(interaction: discord.Interaction):
-    if not await check_permissions(interaction):
-        return
-    logs = list(reversed(key_manager.key_logs[-15:]))
-    if not logs:
-        await interaction.response.send_message("📭 No logs yet.", ephemeral=True)
-        return
-    lines = []
-    for e in logs:
-        when = f"<t:{e.get('ts',0)}:R>"
-        event = e.get('event','?')
-        key = e.get('key','')
-        uid = e.get('user_id')
-        lines.append(f"{when} — {event.upper()} — `{key}` — {('<@'+str(uid)+'>') if uid else ''}")
-    embed = discord.Embed(title="📝 Recent Key Logs", description="\n".join(lines), color=0x8b5cf6)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 # --- ADD LEADERBOARD COMMAND BELOW ---
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="leaderboard", description="Show the top users by key usage")
-async def leaderboard(interaction: discord.Interaction):
-    """Show the top users by key usage"""
-    # Remove special admin check so everyone can use this command
-
-    # Aggregate usage by user_id
-    usage = key_manager.key_usage
-    user_counts = {}
-    for key, data in usage.items():
-        uid = key_manager.keys.get(key, {}).get("user_id", 0)
-        if uid:
-            user_counts[uid] = user_counts.get(uid, 0) + data.get("usage_count", 0)
-
-    # Sort and get top 10
-    top = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    if not top:
-        await interaction.response.send_message("No usage data yet.", ephemeral=True)
-        return
-
-    lines = []
-    for idx, (uid, count) in enumerate(top, start=1):
-        lines.append(f"**{idx}.** <@{uid}> — `{count}` uses")
-
-    embed = discord.Embed(
-        title="🏆 Key Usage Leaderboard",
-        description="\n".join(lines),
-        color=0xFFD700
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @tasks.loop(seconds=60)
 async def reconcile_roles_task():
@@ -3351,51 +3390,6 @@ async def periodic_backup_task():
         await upload_backup_snapshot(payload)
     except Exception:
         pass
-
-
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="listcommands", description="List registered application commands (debug)")
-async def listcommands(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer(ephemeral=True)
-        cmds = bot.tree.get_commands(guild=discord.Object(id=GUILD_ID))
-        names = [c.name for c in cmds]
-        await interaction.followup.send("\n".join(names) or "(no commands)")
-    except Exception as e:
-        if interaction.response.is_done():
-            await interaction.followup.send(f"Error: {e}")
-        else:
-            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-
-
-
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="backupchannel", description="Set the channel to auto-backup keys and auto-restore on deploy")
-async def set_backup_channel_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
-    try:
-        global BACKUP_CHANNEL_ID
-        BACKUP_CHANNEL_ID = int(channel.id)
-        CONFIG['BACKUP_CHANNEL_ID'] = BACKUP_CHANNEL_ID
-        save_config()
-        await interaction.response.send_message(f"✅ Backup channel set to {channel.mention}.", ephemeral=True)
-        # Ensure backup loop is running
-        try:
-            if not periodic_backup_task.is_running():
-                periodic_backup_task.start()
-        except Exception:
-            pass
-        # Optional immediate backup
-        try:
-            payload = key_manager.build_backup_payload()
-            data = json.dumps(payload, indent=2).encode()
-            file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
-            await channel.send(content="Manual backup after setting channel", file=file)
-        except Exception:
-            pass
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to set backup channel: {e}", ephemeral=True)
 
 # ---------------------- TEXT COMMAND FALLBACKS ----------------------
 
