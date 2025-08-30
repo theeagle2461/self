@@ -911,8 +911,6 @@ async def check_permissions(interaction) -> bool:
         return False
 
     # Special admins always allowed
-      in SPECIAL_ADMIN_IDS:
-        return True
 
     # Commands that everyone can use
     public_commands = {
@@ -4253,3 +4251,4 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		await interaction.response.send_message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
 		await interaction.response.send_message(f"❌ Swap failed: {e}", ephemeral=True) 
+
