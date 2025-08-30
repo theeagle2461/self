@@ -52,22 +52,15 @@ except Exception:
 	BACKUP_INTERVAL_MIN = 60
 
 # Special admin user IDs for key generation and management
-SPECIAL_ADMIN_IDS = [1216851450844413953, 414921052968452098, 485182079923912734]  # Admin user IDs
-
-def special_admin_only():
-	async def predicate(interaction: discord.Interaction) -> bool:
-		return interaction.user.id in SPECIAL_ADMIN_IDS
-	return app_commands.check(predicate)
-
 # Admin role-only check (role 1402650246538072094)
 def admin_role_only():
-	async def predicate(interaction: discord.Interaction) -> bool:
-		try:
-			member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
-			return bool(member and any(getattr(r, 'id', 0) == 1402650246538072094 for r in getattr(member, 'roles', [])))
-		except Exception:
-			return False
-	return app_commands.check(predicate)
+    async def predicate(interaction: discord.Interaction) -> bool:
+        try:
+            member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
+            return bool(member and any(getattr(r, 'id', 0) in [OWNER_ROLE_ID, ADMIN_ROLE_ID] for r in getattr(member, 'roles', [])))
+        except Exception:
+            return False
+    return app_commands.check(predicate)
 
 # Webhook configuration for key notifications and selfbot launches
 WEBHOOK_URL = "https://discord.com/api/webhooks/1404537582804668619/6jZeEj09uX7KapHannWnvWHh5a3pSQYoBuV38rzbf_rhdndJoNreeyfFfded8irbccYB"
@@ -886,52 +879,33 @@ async def on_ready():
             pass
 
 @bot.event
-async def on_disconnect():
-    try:
-        await send_status_webhook('offline')
-    except Exception:
-        pass
-
 async def check_permissions(interaction) -> bool:
     """Check if user has permission to use bot commands"""
     if not interaction.guild:
-        await interaction.response.send_message("❌ This bot can only be used in a server.", ephemeral=True)
         return False
-    
     if interaction.guild.id != GUILD_ID:
-        await interaction.response.send_message("❌ This bot is not configured for this server.", ephemeral=True)
         return False
-    
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
-        await interaction.response.send_message("❌ Unable to verify your permissions.", ephemeral=True)
         return False
-
     # Special admins always allowed
     if interaction.user.id in SPECIAL_ADMIN_IDS:
         return True
-
     # Commands that everyone can use
     public_commands = {
         "help", "activate", "keys", "info", "status", "activekeys", "expiredkeys",
-        "sync", "synccommands"
+        "sync", "synccommands", "leaderboard"
     }
     cmd_name = None
     try:
         cmd_name = getattr(interaction.command, "name", None)
     except Exception:
         cmd_name = None
-
     if cmd_name in public_commands:
         return True
-
     # For all other commands, require admin role
     has_admin_role = ADMIN_ROLE_ID in [role.id for role in member.roles]
-    if not has_admin_role:
-        await interaction.response.send_message("❌ You don't have permission to use this bot.", ephemeral=True)
-        return False
-    
-    return True
+    return has_admin_role
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activate", description="Activate a key and get the user role")
@@ -3289,10 +3263,7 @@ async def keylogs(interaction: discord.Interaction):
 @bot.tree.command(name="leaderboard", description="Show the top users by key usage")
 async def leaderboard(interaction: discord.Interaction):
     """Show the top users by key usage"""
-    # Only special admins can use this command
-    if interaction.user.id not in SPECIAL_ADMIN_IDS:
-        await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
-        return
+    # Remove special admin check so everyone can use this command
 
     # Aggregate usage by user_id
     usage = key_manager.key_usage
