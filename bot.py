@@ -3319,7 +3319,6 @@ async def leaderboard(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
 @tasks.loop(seconds=60)
 async def reconcile_roles_task():
     """Grant or remove the access role based on key validity."""
