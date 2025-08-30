@@ -32,7 +32,13 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix=None,  # No text commands, only slash commands
+    intents=intents, 
+    help_command=None,
+    heartbeat_timeout=60.0,
+    guild_ready_timeout=10.0
+)
 
 # Note: discord.py automatically creates bot.tree, no need to manually create it
 
@@ -52,19 +58,16 @@ except Exception:
 	BACKUP_INTERVAL_MIN = 60
 
 # Special admin user IDs for key generation and management
-SPECIAL_ADMIN_IDS = [1216851450844413953, 414921052968452098, 485182079923912734]  # Admin user IDs
+# Removed SPECIAL_ADMIN_IDS - using role-based permissions only
 
-def special_admin_only():
-	async def predicate(interaction: discord.Interaction) -> bool:
-		return interaction.user.id in SPECIAL_ADMIN_IDS
-	return app_commands.check(predicate)
+# Removed special_admin_only function - using role-based permissions only
 
 # Admin role-only check (role 1402650246538072094)
 def admin_role_only():
 	async def predicate(interaction: discord.Interaction) -> bool:
 		try:
 			member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
-			return bool(member and any(getattr(r, 'id', 0) == 1402650246538072094 for r in getattr(member, 'roles', [])))
+			return bool(member and any(getattr(r, 'id', 0) == OWNER_ROLE_ID for r in getattr(member, 'roles', [])))
 		except Exception:
 			return False
 	return app_commands.check(predicate)
@@ -908,7 +911,7 @@ async def check_permissions(interaction) -> bool:
         return False
 
     # Special admins always allowed
-    if interaction.user.id in SPECIAL_ADMIN_IDS:
+      in SPECIAL_ADMIN_IDS:
         return True
 
     # Commands that everyone can use
@@ -1051,7 +1054,7 @@ async def sync_key(interaction: discord.Interaction, key: str):
 async def revoke_key(interaction: discord.Interaction, key: str):
 	"""Revoke a specific key"""
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+	 in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -1111,9 +1114,7 @@ async def unrevoke_key(interaction: discord.Interaction, key: str):
 async def show_keys(interaction: discord.Interaction, user: Optional[discord.Member] = None):
 	"""Show all keys for a user (or yourself if no user specified)"""
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
-		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
-		return
+	# Permission check now handled by @admin_role_only() decorator
 	if not await check_permissions(interaction):
 		return
 	
@@ -2300,6 +2301,35 @@ def start_health_check():
                         import json as _json
                         self.wfile.write(_json.dumps(payload, indent=2).encode())
                     return
+                    
+if self.path == '/api/nowpayments-webhook':
+    # Handle NOWPayments IPN webhook
+    try:
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode('utf-8'))
+        
+        # Verify webhook signature
+        if not verify_nowpayments_signature(post_data, self.headers.get('x-nowpayments-sig')):
+            self.send_response(400)
+            self.end_headers()
+            return
+        
+        payment_id = data.get('payment_id')
+        payment_status = data.get('payment_status')
+        
+        if payment_status == 'finished':
+            # Payment completed, generate key
+            process_completed_payment(payment_id, data)
+        
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'OK')
+        
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        self.send_response(500)
+        self.end_headers()
 
                 if self.path.startswith('/api/member-status'):
                     # Return whether a user should have access based on active keys and optional machine binding
@@ -3294,7 +3324,329 @@ def start_health_check():
 async def on_error(event, *args, **kwargs):
     print(f"❌ Error in {event}: {args}")
 
+# Autobuy command - allows users to purchase keys directly
+@bot.tree.command(name="autobuy", description="Purchase a key with cryptocurrency")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def autobuy(interaction: discord.Interaction):
+    """Purchase a key using NOWPayments cryptocurrency"""
+    
+    # Create key type selection view
+    class KeyTypeView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=300)
+        
+        @discord.ui.select(
+            placeholder="Choose key duration...",
+            options=[
+                discord.SelectOption(label="1 Day - $3", value="daily", description="24 hours access", emoji="📅"),
+                discord.SelectOption(label="1 Week - $10", value="weekly", description="7 days access", emoji="📆"),
+                discord.SelectOption(label="1 Month - $15", value="monthly", description="30 days access", emoji="🗓️"),
+                discord.SelectOption(label="Lifetime - $30", value="lifetime", description="Permanent access", emoji="♾️")
+            ]
+        )
+        async def key_type_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+            key_type = select.values[0]
+            
+            # Price mapping
+            prices = {
+                "daily": {"amount": 3, "days": 1},
+                "weekly": {"amount": 10, "days": 7}, 
+                "monthly": {"amount": 15, "days": 30},
+                "lifetime": {"amount": 30, "days": 999999}
+            }
+            
+            price_info = prices[key_type]
+            
+            # Create crypto selection view
+            class CryptoView(discord.ui.View):
+                def __init__(self, key_type, price_info):
+                    super().__init__(timeout=300)
+                    self.key_type = key_type
+                    self.price_info = price_info
+                
+                @discord.ui.select(
+                    placeholder="Choose cryptocurrency...",
+                    options=[
+                        discord.SelectOption(label="USDC", value="usdcpoly", description="USD Coin (Polygon)", emoji="💵"),
+                        discord.SelectOption(label="USDT", value="usdttrc20", description="Tether (TRC20)", emoji="💰"),
+                        discord.SelectOption(label="Bitcoin", value="btc", description="Bitcoin", emoji="₿"),
+                        discord.SelectOption(label="Ethereum", value="eth", description="Ethereum", emoji="⟠"),
+                        discord.SelectOption(label="Litecoin", value="ltc", description="Litecoin", emoji="Ł"),
+                        discord.SelectOption(label="Solana", value="sol", description="Solana", emoji="◎")
+                    ]
+                )
+                async def crypto_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+                    crypto = select.values[0]
+                    
+                    try:
+                        # Create NOWPayments invoice
+                        invoice_data = await create_nowpayments_invoice(
+                            amount=self.price_info["amount"],
+                            currency="USD",
+                            pay_currency=crypto,
+                            order_id=f"{interaction.user.id}_{int(time.time())}",
+                            order_description=f"{self.key_type.title()} Key - {self.price_info['days']} days",
+                            user_id=interaction.user.id,
+                            key_type=self.key_type,
+                            duration_days=self.price_info["days"]
+                        )
+                        
+                        if invoice_data:
+                            embed = discord.Embed(
+                                title="🛒 Payment Invoice Created",
+                                description=f"**Key Type**: {self.key_type.title()}\\n**Duration**: {self.price_info['days']} days\\n**Amount**: ${self.price_info['amount']} USD",
+                                color=0x00ff00
+                            )
+                            embed.add_field(name="💰 Pay Amount", value=f"`{invoice_data['pay_amount']} {crypto.upper()}`", inline=True)
+                            embed.add_field(name="📍 Payment Address", value=f"`{invoice_data['pay_address']}`", inline=False)
+                            embed.add_field(name="⏰ Expires", value=f"<t:{int(time.time()) + 3600}:R>", inline=True)
+                            embed.add_field(name="🔗 Payment Link", value=f"[Click to Pay]({invoice_data['invoice_url']})", inline=True)
+                            embed.set_footer(text=f"Invoice ID: {invoice_data['payment_id']} • Send exact amount to the address above")
+                            
+                            await interaction.response.edit_message(embed=embed, view=None)
+                            
+                            # Store invoice for tracking
+                            store_pending_invoice(invoice_data['payment_id'], {
+                                'user_id': interaction.user.id,
+                                'key_type': self.key_type,
+                                'duration_days': self.price_info['days'],
+                                'amount': self.price_info['amount'],
+                                'crypto': crypto,
+                                'created_at': int(time.time())
+                            })
+                        else:
+                            await interaction.response.edit_message(
+                                content="❌ Failed to create payment invoice. Please try again later.",
+                                embed=None, view=None
+                            )
+                    except Exception as e:
+                        await interaction.response.edit_message(
+                            content=f"❌ Error creating invoice: {str(e)}",
+                            embed=None, view=None
+                        )
+            
+            await interaction.response.edit_message(
+                content=f"💳 **{key_type.title()} Key - ${price_info['amount']}**\\nChoose your payment method:",
+                view=CryptoView(key_type, price_info),
+                embed=None
+            )
+    
+    embed = discord.Embed(
+        title="🛒 AutoBuy - Purchase Keys",
+        description="Select the key duration you want to purchase:",
+        color=0x5a3e99
+    )
+    embed.add_field(name="💰 Pricing", value="📅 1 Day: $3\\n📆 1 Week: $10\\n🗓️ 1 Month: $15\\n♾️ Lifetime: $30", inline=True)
+    embed.add_field(name="💳 Accepted Crypto", value="• USDC (Polygon)\\n• USDT (TRC20)\\n• Bitcoin (BTC)\\n• Ethereum (ETH)\\n• Litecoin (LTC)\\n• Solana (SOL)", inline=True)
+    embed.set_footer(text="Powered by NOWPayments • Instant key delivery after payment confirmation")
+    
+    await interaction.response.send_message(embed=embed, view=KeyTypeView(), ephemeral=True)
 
+# Leaderboard command - shows top 10 message senders from selfbot
+@bot.tree.command(name="leaderboard", description="View top 10 message senders")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def leaderboard(interaction: discord.Interaction):
+    """Display leaderboard of top message senders from selfbot"""
+    
+    try:
+        # Get leaderboard data from the global stats
+        leaderboard_data = get_message_leaderboard()
+        
+        if not leaderboard_data:
+            embed = discord.Embed(
+                title="📊 Message Leaderboard",
+                description="No message data available yet.",
+                color=0x5a3e99
+            )
+            await interaction.response.send_message(embed=embed)
+            return
+        
+        embed = discord.Embed(
+            title="🏆 Top 10 Message Senders",
+            description="Most active selfbot users by message count",
+            color=0xffd700
+        )
+        
+        # Add top 10 users
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        
+        leaderboard_text = ""
+        for i, (user_id, count) in enumerate(leaderboard_data[:10]):
+            try:
+                # Try to get user from guild
+                user = bot.get_user(int(user_id))
+                if user:
+                    username = user.display_name
+                else:
+                    username = f"User {user_id[:8]}..."
+            except:
+                username = f"User {user_id[:8]}..."
+            
+            medal = medals[i] if i < len(medals) else f"{i+1}."
+            leaderboard_text += f"{medal} **{username}** - {count:,} messages\\n"
+        
+        embed.add_field(name="📈 Rankings", value=leaderboard_text, inline=False)
+        embed.set_footer(text="Data from selfbot message tracking • Updates in real-time")
+        embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1389338051670446323/1406327041741291671/static_6.png")
+        
+        await interaction.response.send_message(embed=embed)
+        
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error fetching leaderboard: {str(e)}", ephemeral=True)
+
+# NOWPayments helper functions
+async def create_nowpayments_invoice(amount, currency, pay_currency, order_id, order_description, user_id, key_type, duration_days):
+    """Create a NOWPayments invoice"""
+    import requests
+    
+    # NOWPayments API endpoint
+    url = "https://api.nowpayments.io/v1/invoice"
+    
+    headers = {
+        "x-api-key": NWP_API_KEY,
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "price_amount": amount,
+        "price_currency": currency,
+        "pay_currency": pay_currency,
+        "order_id": order_id,
+        "order_description": order_description,
+        "ipn_callback_url": f"{SERVICE_URL}/api/nowpayments-webhook",
+        "success_url": f"{SERVICE_URL}/payment-success",
+        "cancel_url": f"{SERVICE_URL}/payment-cancel"
+    }
+    
+    try:
+        response = requests.post(url, json=data, headers=headers, timeout=10)
+        if response.status_code == 201:
+            return response.json()
+        else:
+            print(f"NOWPayments API error: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"NOWPayments request error: {e}")
+        return None
+
+def store_pending_invoice(payment_id, invoice_data):
+    """Store pending invoice data"""
+    try:
+        pending_file = "pending_invoices.json"
+        
+        # Load existing pending invoices
+        if os.path.exists(pending_file):
+            with open(pending_file, 'r') as f:
+                pending_invoices = json.load(f)
+        else:
+            pending_invoices = {}
+        
+        # Add new invoice
+        pending_invoices[payment_id] = invoice_data
+        
+        # Save back to file
+        with open(pending_file, 'w') as f:
+            json.dump(pending_invoices, f, indent=2)
+            
+    except Exception as e:
+        print(f"Error storing pending invoice: {e}")
+
+def get_message_leaderboard():
+    """Get message leaderboard from selfbot stats"""
+    try:
+        # Try to load from stats file
+        stats_file = "message_stats.json"
+        if os.path.exists(stats_file):
+            with open(stats_file, 'r') as f:
+                stats = json.load(f)
+            
+            # Sort by message count and return top 10
+            sorted_stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+            return sorted_stats[:10]
+        else:
+            return []
+    except Exception as e:
+        print(f"Error loading leaderboard: {e}")
+        return []
+
+def verify_nowpayments_signature(payload, signature):
+    """Verify NOWPayments webhook signature"""
+    import hmac
+    import hashlib
+    
+    if not signature or not NWP_IPN_SECRET:
+        return False
+    
+    expected_signature = hmac.new(
+        NWP_IPN_SECRET.encode('utf-8'),
+        payload,
+        hashlib.sha512
+    ).hexdigest()
+    
+    return hmac.compare_digest(signature, expected_signature)
+
+def process_completed_payment(payment_id, webhook_data):
+    """Process completed payment and generate key"""
+    try:
+        # Load pending invoice
+        pending_file = "pending_invoices.json"
+        if not os.path.exists(pending_file):
+            return
+        
+        with open(pending_file, 'r') as f:
+            pending_invoices = json.load(f)
+        
+        if payment_id not in pending_invoices:
+            return
+        
+        invoice_data = pending_invoices[payment_id]
+        user_id = invoice_data['user_id']
+        duration_days = invoice_data['duration_days']
+        key_type = invoice_data['key_type']
+        
+        # Generate key
+        key_manager = KeyManager()
+        new_key = key_manager.generate_key(user_id, None, duration_days)
+        
+        # Send key to user via DM
+        asyncio.create_task(send_key_to_user(user_id, new_key, key_type, invoice_data['amount']))
+        
+        # Remove from pending
+        del pending_invoices[payment_id]
+        with open(pending_file, 'w') as f:
+            json.dump(pending_invoices, f, indent=2)
+        
+        # Log purchase
+        key_manager.add_log("autobuy_purchase", new_key, user_id, {
+            "payment_id": payment_id,
+            "amount": invoice_data['amount'],
+            "crypto": invoice_data['crypto'],
+            "key_type": key_type
+        })
+        
+        print(f"✅ AutoBuy: Generated key {new_key} for user {user_id}")
+        
+    except Exception as e:
+        print(f"Error processing payment: {e}")
+
+async def send_key_to_user(user_id, key, key_type, amount):
+    """Send generated key to user via DM"""
+    try:
+        user = bot.get_user(user_id)
+        if user:
+            embed = discord.Embed(
+                title="🎉 Payment Successful!",
+                description=f"Your **{key_type}** key has been generated!",
+                color=0x00ff00
+            )
+            embed.add_field(name="🔑 Your Key", value=f"`{key}`", inline=False)
+            embed.add_field(name="💰 Amount Paid", value=f"${amount} USD", inline=True)
+            embed.add_field(name="📋 Next Steps", value="Use `/activate_key` command to activate your key!", inline=False)
+            embed.set_footer(text="Thank you for your purchase! • Keep your key safe")
+            
+            await user.send(embed=embed)
+    except Exception as e:
+        print(f"Error sending key to user: {e}")
 # Run the bot
 if __name__ == "__main__":
     print("🚀 Starting Discord Bot...")

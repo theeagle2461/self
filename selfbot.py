@@ -50,7 +50,7 @@ except Exception:
     pass
 
 
-def render_banner(status: str = "offline", frame: int = 0):
+ render_banner(status: str = "offline", frame: int = 0):
     # Clear screen
     os.system('cls' if os.name == 'nt' else 'clear')
     # Choose font (bigger if available)
@@ -363,7 +363,7 @@ class DiscordBotGUI:
                     self.restore_from_discord_backup()
                 except Exception as e:
                     try:
-                        self.log(f"Backup restore failed: {e}")
+                        (f"Backup restore failed: {e}")
                     except Exception:
                         pass
             threading.Thread(target=_restore_async, daemon=True).start()
@@ -1248,21 +1248,30 @@ class DiscordBotGUI:
         except Exception:
             pass
 
-    # -------- Token & Channel Save/Load --------
     def save_token(self):
-        token = self.token_entry.get().strip()
-        if not token:
-            self.log("❌ Token cannot be empty.")
-            return
-        name = simpledialog.askstring("Token Name", "Enter a name for this token:")
-        if not name:
-            self.log("❌ Token name cannot be empty.")
-            return
-        self.tokens[name] = token
+    token = self.token_entry.get().strip()
+    if not token:
+        self.log("❌ Token cannot be empty.")
+        return
+    
+    # Auto-generate name if not provided
+    name = simpledialog.askstring("Token Name", "Enter a name for this token:")
+    if not name:
+        # Auto-generate name based on existing tokens count
+        name = f"Token_{len(self.tokens) + 1}"
+    
+    # Save the token
+    self.tokens[name] = token
+    self.save_data()
+    self.update_token_menu()
+    self.token_var.set(name)
+    self.log(f"✅ Token '{name}' saved.")
+    
+    # Auto-save to selected tokens if less than 3
+    if hasattr(self, 'selected_tokens') and len(self.selected_tokens) < 3:
+        self.selected_tokens.append(name)
         self.save_data()
-        self.update_token_menu()
-        self.token_var.set(name)
-        self.log(f"✅ Token '{name}' saved.")
+        self.log(f"✅ Token '{name}' added to selected tokens.")
 
     def save_channel(self):
         channel_id = self.channel_entry.get().strip()
@@ -1986,17 +1995,56 @@ class DiscordBotGUI:
                             content_to_send = msgs[getattr(self, 'rotator_index', 0) % len(msgs)]
                     else:
                         content_to_send = message
-                    resp = requests.post(url, headers=headers, json={"content": content_to_send})
+                    # Add timeout and retry logic for better reliability
+max_retries = 3
+for attempt in range(max_retries):
+    try:
+        resp = requests.post(url, headers=headers, json={"content": content_to_send}, timeout=10)
+        break  # Success, exit retry loop
+    except requests.exceptions.Timeout:
+        if attempt < max_retries - 1:
+            self.log(f"⚠️ Timeout on attempt {attempt + 1}, retrying...")
+            time.sleep(2 ** attempt)  # Exponential backoff
+            continue
+        else:
+            self.log(f"❌ Failed after {max_retries} attempts due to timeout")
+            resp = type('MockResponse', (), {'status_code': 408, 'text': 'Request timeout'})()
+    except requests.exceptions.RequestException as e:
+        if attempt < max_retries - 1:
+            self.log(f"⚠️ Request error on attempt {attempt + 1}: {e}, retrying...")
+            time.sleep(2 ** attempt)
+            continue
+        else:
+            self.log(f"❌ Failed after {max_retries} attempts: {e}")
+            resp = type('MockResponse', (), {'status_code': 500, 'text': str(e)})()
                     if resp.status_code in (200, 201):
-                        self.log(f"✅ Message sent to channel '{channel_name}'.")
-                        self.message_counter_total += 1
-                        self._update_stats_label()
-                        try:
-                            self.increment_message_stats(token)
-                        except Exception:
-                            pass
-                    else:
-                        self.log(f"❌ Failed to send to '{channel_name}': HTTP {resp.status_code}")
+    self.log(f"✅ Message sent to channel '{channel_name}'.")
+    self.message_counter_total += 1
+    self._update_stats_label()
+    try:
+        self.increment_message_stats(token)
+    except Exception:
+        pass
+elif resp.status_code == 429:  # Rate limited
+    try:
+        retry_after = resp.json().get('retry_after', 1)
+        self.log(f"⚠️ Rate limited for {retry_after}s, waiting...")
+        time.sleep(retry_after + 0.5)  # Add small buffer
+    except:
+        self.log("⚠️ Rate limited, waiting 5 seconds...")
+        time.sleep(5)
+elif resp.status_code in (401, 403):  # Unauthorized/Forbidden
+    self.log(f"❌ Token may be invalid or lacks permissions: HTTP {resp.status_code}")
+    break  # Stop this token's loop
+else:
+    self.log(f"❌ Failed to send to '{channel_name}': HTTP {resp.status_code}")
+    if hasattr(resp, 'text'):
+        try:
+            error_text = resp.text[:200]  # Limit error text
+            self.log(f"Error details: {error_text}")
+        except:
+            pass
+
                 except Exception as e:
                     self.log(f"❌ Error sending to '{channel_name}': {e}")
 
@@ -2146,11 +2194,12 @@ class DiscordBotGUI:
                                         self.log(f"📩 New DM from {author_id}, replying in {delay} seconds...")
                                         try:
                                             time.sleep(delay)  # wait before replying
-                                            send_resp = requests.post(
-                                                f"{API_BASE}/channels/{channel_id}/messages",
-                                                headers=headers,
-                                                json={"content": reply_message}
-                                            )
+send_resp = requests.post(
+    f"{API_BASE}/channels/{channel_id}/messages",
+    headers=headers,
+    json={"content": reply_message},
+    timeout=10  # Add timeout for DM replies
+)
                                             if send_resp.status_code in (200, 201):
                                                 self.log(f"✅ Replied to DM from {author_id}.")
                                                 replied_users.add(author_id)
@@ -2169,8 +2218,16 @@ class DiscordBotGUI:
                                             self.log(f"❌ Exception sending DM reply: {e}")
 
                         except Exception as e:
-                            self.log(f"❌ WebSocket Error: {e}")
-                            await asyncio.sleep(5)
+    error_msg = str(e)
+    if "1101" in error_msg or "timeout" in error_msg.lower():
+        self.log(f"❌ WebSocket Timeout (1101): Connection lost, reconnecting in 10s...")
+        await asyncio.sleep(10)
+    elif "1006" in error_msg:
+        self.log(f"❌ WebSocket Connection Closed (1006): Reconnecting in 5s...")
+        await asyncio.sleep(5)
+    else:
+        self.log(f"❌ WebSocket Error: {e}")
+        await asyncio.sleep(5)
 
             except Exception as e:
                 self.log(f"❌ Could not connect to Discord Gateway: {e}")
