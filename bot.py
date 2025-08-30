@@ -53,11 +53,11 @@ except Exception:
 
 # Special admin user IDs for key generation and management
 # Admin role-only check (role 1402650246538072094)
-def admin_role_only():
+def owner_role_only():
     async def predicate(interaction: discord.Interaction) -> bool:
         try:
             member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
-            return bool(member and any(getattr(r, 'id', 0) in [OWNER_ROLE_ID, ADMIN_ROLE_ID] for r in getattr(member, 'roles', [])))
+            return bool(member and any(getattr(r, 'id', 0) == OWNER_ROLE_ID for r in getattr(member, 'roles', [])))
         except Exception:
             return False
     return app_commands.check(predicate)
@@ -878,7 +878,6 @@ async def on_ready():
         except Exception:
             pass
 
-@bot.event
 async def check_permissions(interaction) -> bool:
     """Check if user has permission to use bot commands"""
     if not interaction.guild:
@@ -888,9 +887,6 @@ async def check_permissions(interaction) -> bool:
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
         return False
-    # Special admins always allowed
-    if interaction.user.id in SPECIAL_ADMIN_IDS:
-        return True
     # Commands that everyone can use
     public_commands = {
         "help", "activate", "keys", "info", "status", "activekeys", "expiredkeys",
@@ -1025,9 +1021,6 @@ async def sync_key(interaction: discord.Interaction, key: str):
 async def revoke_key(interaction: discord.Interaction, key: str):
 	"""Revoke a specific key"""
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
-		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
-		return
 	if not await check_permissions(interaction):
 		return
 	
@@ -1081,35 +1074,32 @@ async def unrevoke_key(interaction: discord.Interaction, key: str):
 
 @admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="keys", description="Show all keys for a user")
+@bot.tree.command(name="keys", description="Show all keys for a user (admin only)")
 async def show_keys(interaction: discord.Interaction, user: Optional[discord.Member] = None):
-	"""Show all keys for a user (or yourself if no user specified)"""
-	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
-		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
-		return
-	if not await check_permissions(interaction):
-		return
-	
-	target_user = user or interaction.user
-	user_keys = key_manager.get_user_keys(target_user.id)
-	
-	if not user_keys:
-		await interaction.response.send_message(f"📭 No keys found for {target_user.mention}.", ephemeral=True)
-		return
-	
-	embed = discord.Embed(
-		title=f"🔑 Keys for {target_user.display_name}",
-		color=0x2d6cdf
-	)
-	
-	for i, (key, data) in enumerate(user_keys.items(), start=1):
-		status = "Active" if data.get("is_active", False) else "Revoked"
-		expires = data.get("expiration_time")
-		expires_str = f"<t:{expires}:R>" if expires else "N/A"
-		embed.add_field(name=f"Key {i}", value=f"`{key}`\nStatus: **{status}**\nExpires: {expires_str}", inline=False)
-	
-	await interaction.response.send_message(embed=embed, ephemeral=True)
+    """Show all keys for a user (or yourself if no user specified)"""
+    if not await check_permissions(interaction):
+        return
+
+    target_user = user or interaction.user
+    user_keys = key_manager.get_user_keys(target_user.id)
+
+    if not user_keys:
+        await interaction.response.send_message(f"📭 No keys found for {target_user.mention}.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=f"🔑 Keys for {target_user.display_name}",
+        color=0x2d6cdf
+    )
+
+    for i, key_info in enumerate(user_keys, start=1):
+        key = key_info["key"]
+        status = "Active" if key_info.get("is_active", False) else "Revoked"
+        expires = key_info.get("expiration_time")
+        expires_str = f"<t:{expires}:R>" if expires else "N/A"
+        embed.add_field(name=f"Key {i}", value=f"`{key}`\nStatus: **{status}**\nExpires: {expires_str}", inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -1155,7 +1145,6 @@ async def key_info(interaction: discord.Interaction, key: str):
 async def backup_keys(interaction: discord.Interaction):
 	"""Create a backup of all keys"""
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -1180,7 +1169,6 @@ async def backup_keys(interaction: discord.Interaction):
 async def restore_keys(interaction: discord.Interaction, backup_file: str):
 	"""Restore keys from a backup file"""
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -1210,7 +1198,6 @@ async def restore_keys(interaction: discord.Interaction, backup_file: str):
 async def bot_status(interaction: discord.Interaction):
 	"""Show bot status and statistics"""
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -1244,7 +1231,6 @@ async def bot_status(interaction: discord.Interaction):
 async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int, weekly_count: int, monthly_count: int, lifetime_count: int):
     """Generate multiple keys of different types - Special Admin Only"""
     # Check if user is a special admin
-    if interaction.user.id not in SPECIAL_ADMIN_IDS:
         await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
         return
     
@@ -1290,7 +1276,6 @@ async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int,
 async def view_available_keys(interaction: discord.Interaction):
     """View all available keys grouped by type - Special Admin Only"""
     # Check if user is a special admin
-    if interaction.user.id not in SPECIAL_ADMIN_IDS:
         await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
         return
     
@@ -1350,7 +1335,6 @@ async def view_available_keys(interaction: discord.Interaction):
 async def delete_key(interaction: discord.Interaction, key: str):
     """Completely delete a key - Special Admin Only"""
     # Check if user is a special admin
-    if interaction.user.id not in SPECIAL_ADMIN_IDS:
         await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
         return
     
@@ -1381,7 +1365,6 @@ async def delete_key(interaction: discord.Interaction, key: str):
 async def view_deleted_keys(interaction: discord.Interaction):
     """View all deleted keys - Special Admin Only"""
     # Check if user is a special admin
-    if interaction.user.id not in SPECIAL_ADMIN_IDS:
         await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
         return
     
@@ -1419,12 +1402,11 @@ async def view_deleted_keys(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@admin_role_only()
+@owner_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activekeys", description="List all active keys with remaining time and assigned user")
 async def active_keys(interaction: discord.Interaction):
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -1471,7 +1453,6 @@ async def active_keys(interaction: discord.Interaction):
 @bot.tree.command(name="expiredkeys", description="List expired keys")
 async def expired_keys(interaction: discord.Interaction):
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -1507,7 +1488,6 @@ async def expired_keys(interaction: discord.Interaction):
 @bot.tree.command(name="swapmachineid", description="Swap a user's active key to a new machine ID (Special Admin Only)")
 async def swap_machine_id(interaction: discord.Interaction, user: discord.Member, new_machine_id: str):
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
@@ -3281,6 +3261,26 @@ async def leaderboard(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="help", description="Show all public commands and what they do")
+async def help_command(interaction: discord.Interaction):
+    public_commands = [
+        ("/help", "Show all public commands and what they do"),
+        ("/activate", "Activate a key and get the user role"),
+        ("/info", "Get detailed information about a key you own"),
+        ("/status", "Show bot status and statistics"),
+        ("/leaderboard", "Show the top users by key usage"),
+        ("/syncduration", "Sync your key duration with SelfBot"),
+    ]
+    embed = discord.Embed(
+        title="🤖 Public Commands",
+        description="Here are the commands anyone can use:",
+        color=0x5865F2
+    )
+    for name, desc in public_commands:
+        embed.add_field(name=name, value=desc, inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # Run the bot
 if __name__ == "__main__":
     print("🚀 Starting Discord Bot...")
@@ -3426,7 +3426,6 @@ async def upload_backup_snapshot(payload: dict) -> None:
 @bot.tree.command(name="swapkey", description="Swap a key from one user to another (Special Admin Only)")
 async def swap_key(interaction: discord.Interaction, from_user: discord.Member, to_user: discord.Member, key: str):
 	# Special admin only
-	if interaction.user.id not in SPECIAL_ADMIN_IDS:
 		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
 		return
 	if not await check_permissions(interaction):
