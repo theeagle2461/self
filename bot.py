@@ -51,7 +51,6 @@ try:
 except Exception:
 	BACKUP_INTERVAL_MIN = 60
 
-# Special admin user IDs for key generation and management
 # Admin role-only check (role 1402650246538072094)
 def owner_role_only():
     async def predicate(interaction: discord.Interaction) -> bool:
@@ -74,6 +73,27 @@ PUBLIC_URL = os.getenv('PUBLIC_URL','')
 
 # Load bot token from environment variable for security
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+
+async def _message(content=None, embed=None, ephemeral=True, interaction=None):
+    """Helper to send a message in a slash command context."""
+    import inspect
+    if interaction is None:
+        frame = inspect.currentframe()
+        while frame:
+            local_inter = frame.f_locals.get('interaction')
+            if local_inter:
+                interaction = local_inter
+                break
+            frame = frame.f_back
+    if interaction is None:
+        raise RuntimeError("No interaction found for _message()")
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(content=content, embed=embed, ephemeral=ephemeral)
+        else:
+            await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
+    except Exception as e:
+        print(f"_message failed: {e}")
 
 # Secret for signing panel session cookies
 PANEL_SECRET = os.getenv('PANEL_SECRET', None)
@@ -813,8 +833,8 @@ async def on_ready():
     print(f'🌐 Connected to {len(bot.guilds)} guild(s)')
     
     # Set bot status
-    await bot.change_presence(activity=discord.Game(name="Managing Keys | /help"))
-    
+    await bot.change_presence(activity=discord.Game(name="I Hate Ngas | \help"))
+
     # Start time for uptime
     bot.start_time = datetime.datetime.utcnow()
     
@@ -1218,7 +1238,7 @@ async def bot_status(interaction: discord.Interaction):
 	
 	await _message(embed=embed)
 
-# New bulk key generation command for special admins
+# New bulk key generation command 
 @owner_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="generatekeys", description="Generate multiple keys of different types ()")
@@ -3207,31 +3227,28 @@ async def keylogs(interaction: discord.Interaction):
     await _message(embed=embed, ephemeral=True)
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="leaderboard", description="Show the top users by key usage")
+@bot.tree.command(name="leaderboard", description="Show the top users by messages sent in SelfBot")
 async def leaderboard(interaction: discord.Interaction):
-    """Show the top users by key usage"""
-    # Remove special admin check so everyone can use this command
+    """Show the top users by messages sent in SelfBot"""
 
-    # Aggregate usage by user_id
-    usage = key_manager.key_usage
-    user_counts = {}
-    for key, data in usage.items():
-        uid = key_manager.keys.get(key, {}).get("user_id", 0)
-        if uid:
-            user_counts[uid] = user_counts.get(uid, 0) + data.get("usage_count", 0)
+    # Use MESSAGE_STATS to get message counts
+    # MESSAGE_STATS is a dict: {user_id (str): message_count (int)}
+    if not MESSAGE_STATS:
+        await _message("No message data yet.", ephemeral=True)
+        return
 
-    # Sort and get top 10
-    top = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    # Sort users by message count, descending
+    top = sorted(MESSAGE_STATS.items(), key=lambda x: x[1], reverse=True)[:10]
     if not top:
-        await _message("No usage data yet.", ephemeral=True)
+        await _message("No message data yet.", ephemeral=True)
         return
 
     lines = []
     for idx, (uid, count) in enumerate(top, start=1):
-        lines.append(f"**{idx}.** <@{uid}> — `{count}` uses")
+        lines.append(f"**{idx}.** <@{uid}> — `{count}` messages sent")
 
     embed = discord.Embed(
-        title="🏆 Key Usage Leaderboard",
+        title="🏆 Message Leaderboard",
         description="\n".join(lines),
         color=0xFFD700
     )
@@ -3256,6 +3273,215 @@ async def help_command(interaction: discord.Interaction):
     for name, desc in public_commands:
         embed.add_field(name=name, value=desc, inline=False)
     await _message(embed=embed, ephemeral=True)
+
+ # ------- Config (no currencies hardcoded) --------
+ NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
+ NOWPAYMENTS_API_BASE = os.getenv("NOWPAYMENTS_API_BASE", "https://api.nowpayments.io")
+ INVOICE_POLL_SECONDS = int (os.getenv("INVOICE_POLL_SECONDS", "60"))
+ INVOICE_POLL_TIMEOUT_SECONDS = int(os.getenv("INVOICE_POLL_TIMEOUT_SECONDS", str(60 * 90))) # 90 minutes
+ 
+ # Optional: CSV list like "BTC, ETH, SOL, LTC, USDTTRC20, USDTERC20, USDC"
+ ALLOWED_PAY_CURRENCIES: List[str] = [
+ c.strip().upper()
+ for c in os.getenv("ALLOWED_PAY_CURRENCIES", ").split(",")
+ if c.strip()
+ ]
+ 
+ # Your plans and USD prices
+ PLAN_PRICING = {
+ "daily": 3,
+ "weekly": 10,
+ "monthly": 15,
+ "lifetime": 30,
+ }
+ 
+ 
+ # ------- Minimal helpers -------
+ def _generate_readable_key(length: int = 24) -> str:
+ alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+ return "".join(secrets.choice (alphabet) for _ in range (length))
+ 
+ 
+ async def issue_key(plan: str) -> str:
+ # TODO: replace with your real key generation/persistence.
+ return _generate_readable_key()
+ 
+ 
+ class NowPaymentsClient:
+ def __init__(self, api_base: str, api_key: str):
+ self.api_base = api_base.rstrip("/")
+ self.api_key = api_key
+ 
+ async def create_invoice(
+ Self,
+ Session: aiohttp.ClientSession,
+ price_amount: float,
+ Plan: str,
+ order_id: str,
+ pay_currency: Optional[str] = None,
+ success_url: str = "https://nowpayments.io/payment/success",
+ ipn_callback_url: str = "",
+ ):
+ url = f"{self.api_base}/v1/invoice"
+ headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
+ payload = {
+ "price_amount": float(price_amount),
+ "price_currency": "USD",
+ "order_id": order_id,
+ "order_description": f"Selfbot key: {plan}",
+ "success_url": success_url,
+ "ipn_callback_url": ipn_callback_url
+ }
+ # Only constrain currency if you provided a list via env
+ if pay_currency:
+ payload["pay_currency"] = pay_currency
+ async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
+ data = await resp.json()
+ if resp.status >= 300:
+ raise RuntimeError(f"NOWPayments create_invoice error {resp.status}: {data}")
+ Return data
+ 
+ async def get_invoice_status(self, session: aiohttp.ClientSession, invoice_id: str):
+ url = f"{self.api_base}/v1/invoice/{invoice_id}"
+ headers = {"x-api-key": self.api_key}
+ async with session.get(url, headers=headers, timeout=60) as resp:
+ data = await resp.json()
+ if resp.status >= 300:
+ Raise RuntimeError (f"NOWPayments invoice status error {resp.status}: {data}")
+ Return data
+ 
+ 
+ _np_client = NowPaymentsClient (NOWPAYMENTS_API_BASE, NOWPAYMENTS_API_KEY) if NOWPAYMENTS_API_KEY else None
+ 
+ 
+ # ------- UI --------
+ class PlanSelect (discord.ui.Select):
+ def __init__(self):
+ options = [
+ discord.SelectOption(label="daily - $3", value="daily"),
+ discord.SelectOption(label="weekly - $10", value="weekly"
+ discord.SelectOption(label="monthly - $15", value="monthly"),
+ discord.SelectOption(label="lifetime - $30", value="lifetime"),
+ ]
+ super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
+ 
+ async def callback(self, interaction: discord.Interaction):
+ view: "AutoBuyView" = self.view # type: ignore
+ view.selected_plan = self.values[0]
+ if ALLOWED_PAY_CURRENCIES:
+ view.switch_to_crypto()
+ await interaction.response.edit_message
+ content=f"Selected plan: {view.selected_plan}.  Now choose a cryptocurrency.”
+ view=view
+ (
+ else:
+ # No currencies specified: let NOWPayments show your enabled methods
+ await view.create_invoice_and_reply(interaction, chosen_currency=None)
+ 
+ 
+ class CryptoSelect (discord.ui.Select):
+ def __init__(self):
+ options = [discord.SelectOption(label=c, value=c) for c in ALLOWED_PAY_CURRENCIES]
+ super().__init__(placeholder="Select a cryptocurrency", min_values=1, max_values=1, Options=options
+ 
+ async def callback(self, interaction: discord.Interaction):
+ view: "AutoBuyView" = self.view # type: ignore
+ await view.create_invoice_and_reply(interaction, chosen_currency=self.values[0])
+ 
+ 
+ class AutoBuyView (discord.ui.View):
+ def __init__(self, requester_id: int, timeout: Optional[float] = 180):
+ super().__init__(timeout=timeout)
+ self.requester_id = requester_id
+ self.selected_plan: Optional[str] = None
+ self.add_item(PlanSelect())
+ 
+ async def interaction_check(self, interaction: discord.Interaction) -> bool:
+ return interaction.user.id == self.requester_id
+ 
+ def switch_to_crypto(self):
+ self.clear_items()
+ self.add_item(CryptoSelect())
+ 
+ async def create_invoice_and_reply(self, interaction: discord.Interaction, chosen_currency: Optional[str]):
+ if not _np_client:
+ Return await interaction.response.edit_message(content="Payments unavailable right now.", view=None)
+ 
+ if not self.selected_plan or self.selected_plan not in PLAN_PRICING:
+			return await interaction.response.edit_message(content="Invalid plan.", view=None)
+ 
+ price = PLAN_PRICING[self.selected_plan]
+ order_id = f"{interaction.user.id}-{int(time.time())}-{secrets.randbits(16)}"
+ pay_currency = None
+ 
+ if ALLOWED_PAY_CURRENCIES:
+ If not chosen_currency or chosen_currency not in ALLOWED_PAY_CURRENCIES:
+ return await interaction.response.edit_message(content="Invalid currency.", view=None)
+ pay_currency = chosen_currency # constrain to your accepted set
+ 
+ try:
+ async with aiohttp.ClientSession() as session:
+ data = await _np_client.create_invoice(
+ session=session,
+ price_amount=price,
+ plan=self.selected_plan,
+ order_id=order_id,
+ pay_currency=pay_currency, # None => NOWPayments shows enabled methods
+ (
+ Except Exception:
+ return await interaction.response.edit_message(content="Failed to create invoice.  Try again later.", view=None
+ 
+ Invoice_id = str(data.get("id") or data.get("invoice_id") or data.get("order_id" or "unknown"
+ invoice_url = data.get("invoice_url") or data.get("url") or ""
+ if not invoice_url:
+ Return await interaction.response.edit_message(content="Could not get invoice URL.  Try again later.", view=None
+ 
+ msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation
+ try:
+ await interaction.user.send(msg)
+ Except Exception:
+ pass
+ 
+ await interaction.response.edit_message(content=msg, view=None)
+ asyncio.create_task(_wait_and_dm_key(interaction.client, interaction.user.id, invoice_id, self.selected_plan))
+ 
+ 
+ async def _wait_and_dm_key(client: discord.Client, user_id: int, invoice_id: str, plan: str):
+ if not _np_client:
+ Return
+ deadline = time.time() + INVOICE_POLL_TIMEOUT_SECONDS
+ async with aiohttp.ClientSession() as session:
+ while time.time() < deadline:
+ try:
+ data = await _np_client.get_invoice_status(session, invoice_id)
+ Except Exception:
+ await asyncio.sleepINVOICE_POLL_SECONDS
+ Continue
+ 
+ status = str(data.get("payment_status") or data.get("status") or ").lower()
+ If status in {"finished", "confirmed", "confirmed_with_amount_less"}:
+ key = await issue_key(plan)
+ user = client.get_user(user_id) or await client.fetch_user(user_id)
+ try:
+ await user.send(f"✅ Payment confirmed for {plan}.  Your key:\n```\n{key}\n```\nUse /activatekey in the server to activate.")
+ Except Exception:
+ pass
+ Return
+ 
+ await asyncio.sleep (INVOICE_POLL_SECONDS)
+ 
+ 
+ # ------- Slash command registration --------
+ # Call register_autobuy(bot.tree) once (eg, in on_ready) to add the command.
+ def register_autobuy(tree: app_commands.CommandTree):
+ @app_commands.command(name="autobuy", description="Buy a key via crypto (NOWPayments)")
+ async def autobuy (interaction: discord.Interaction):
+ if not _np_client:
+ Return await interaction.response.send_message("Payments unavailable right now.", ephemeral=True)
+ view = AutoBuyView(interaction.User.id
+ await interaction.response.send_message("Select a plan:", view=view, ephemeral=True)
+ 
+ tree.add_command(autobuy)
 
 # Run the bot
 if __name__ == "__main__":
