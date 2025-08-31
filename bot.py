@@ -1027,14 +1027,25 @@ class AutoBuyView(discord.ui.View):
         }
         
         msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation."
-        if ephemeral:
-            await interaction.response.edit_message(content=msg, view=None)
+        if not interaction.response.is_done():
+            if ephemeral:
+                await interaction.response.edit_message(content=msg, view=None)
+            else:
+                try:
+                    await interaction.user.send(msg)
+                except Exception:
+                    pass
+                await interaction.response.edit_message(content=msg, view=None)
         else:
-            try:
-                await interaction.user.send(msg)
-            except Exception:
-                pass
-            await interaction.followup.send(content=msg, view=None)
+            # If already acknowledged, use followup
+            if ephemeral:
+                await interaction.followup.send(content=msg, view=None, ephemeral=True)
+            else:
+                try:
+                    await interaction.user.send(msg)
+                except Exception:
+                    pass
+                await interaction.followup.send(content=msg, view=None)
         
         # If IPN is not configured or not working, fall back to polling
         # (You can implement polling logic here if needed)
