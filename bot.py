@@ -1026,7 +1026,7 @@ class AutoBuyView(discord.ui.View):
             "order_id": order_id,
         }
         
-          msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation."
+        msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation."
         if ephemeral:
             await interaction.response.edit_message(content=msg, view=None)
         else:
