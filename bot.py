@@ -1717,7 +1717,13 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             authed_mid = str(session.get('machine_id')) if session else None
             authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
 
-            # ...rest of your GET logic, all indented 12 spaces from the left...
+            # ...rest of your GET logic, all indented 8 spaces from def...
+            # For example:
+            # if self.path == '/generate-form':
+            #     ... (your handler code) ...
+            # if self.path.startswith('/keys'):
+            #     ... (your handler code) ...
+            # etc.
         except Exception as e:
             try:
                 self.send_response(500)
