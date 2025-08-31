@@ -1065,9 +1065,6 @@ class AutoBuyView(discord.ui.View):
                 except Exception:
                     pass
                 await interaction.followup.send(content=msg, view=None)
-            # If already acknowledged, use followup
-            if ephemeral:
-                await interaction.followup.send(content=msg, view=None, ephemeral=True)
         
         # If IPN is not configured or not working, fall back to polling
         # (You can implement polling logic here if needed)
