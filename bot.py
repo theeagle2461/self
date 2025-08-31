@@ -26,6 +26,7 @@ import requests
 import urllib.parse
 import html
 import io
+import secrets
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -3680,4 +3681,5 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
 		await _message(f"❌ Swap failed: {e}", ephemeral=True) 
+
 
