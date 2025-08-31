@@ -60,6 +60,14 @@ class NowPaymentsClient:
 
 _np_client = NowPaymentsClient(NOWPAYMENTS_API_KEY)
 
+ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
+PLAN_PRICING = {
+    "daily": 3,
+    "weekly": 10,
+    "monthly": 15,
+    "lifetime": 30
+}
+
 # Configuration
 GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
 ROLE_ID = 1404221578782183556
@@ -3278,14 +3286,6 @@ async def leaderboard(interaction: discord.Interaction):
     )
     await _message(embed=embed, ephemeral=True)
 
-    ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
-PLAN_PRICING = {
-    "daily": 3,
-    "weekly": 10,
-    "monthly": 15,
-    "lifetime": 30
-}
-
 pending_payments = {}
 
 async def issue_key(plan: str) -> str:
@@ -3670,6 +3670,3 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
- 		pass
-
-
