@@ -3310,7 +3310,7 @@ class PlanSelect(discord.ui.Select):
         super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-         try:
+        try:
             view: "AutoBuyView" = self.view # type: ignore
             view.selected_plan = self.values[0]
             view.switch_to_crypto()
