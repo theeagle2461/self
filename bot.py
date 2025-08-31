@@ -60,6 +60,14 @@ class NowPaymentsClient:
 
 _np_client = NowPaymentsClient(NOWPAYMENTS_API_KEY)
 
+ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
+PLAN_PRICING = {
+    "daily": 3,
+    "weekly": 10,
+    "monthly": 15,
+    "lifetime": 30
+}
+
 # Configuration
 GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
 ROLE_ID = 1404221578782183556
