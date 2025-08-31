@@ -222,6 +222,9 @@ def save_config() -> None:
     except Exception:
         pass
 
+        async def upload_backup_snapshot(payload: dict) -> None:
+    """Upload a JSON snapshot to the configured Discord backup channel and webhook."""
+
 # Initialize key manager (moved below after class definition)
 # Load config and apply overrides
 CONFIG = load_config()
