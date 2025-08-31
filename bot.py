@@ -60,14 +60,6 @@ class NowPaymentsClient:
 
 _np_client = NowPaymentsClient(NOWPAYMENTS_API_KEY)
 
-ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
-PLAN_PRICING = {
-    "daily": 3,
-    "weekly": 10,
-    "monthly": 15,
-    "lifetime": 30
-}
-
 # Configuration
 GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
 ROLE_ID = 1404221578782183556
@@ -141,7 +133,7 @@ if not BOT_TOKEN:
         BOT_TOKEN = os.getenv('BOT_TOKEN')
     except ImportError:
         pass
-    
+
     # If still no token, try alternative methods
     if not BOT_TOKEN:
         # Method 1: Check for a config file
@@ -152,7 +144,7 @@ if not BOT_TOKEN:
                     BOT_TOKEN = config.get('BOT_TOKEN')
             except:
                 pass
-        
+
         # Method 2: Check for a hidden file
         if not BOT_TOKEN and os.path.exists('.bot_config'):
             try:
@@ -160,7 +152,7 @@ if not BOT_TOKEN:
                     BOT_TOKEN = f.read().strip()
             except:
                 pass
-        
+
         # Method 3: Check for encoded token
         if not BOT_TOKEN and os.path.exists('.encoded_token'):
             try:
@@ -266,11 +258,11 @@ class KeyManager:
             if os.path.exists(KEYS_FILE):
                 with open(KEYS_FILE, 'r') as f:
                     self.keys = json.load(f)
-            
+
             if os.path.exists(USAGE_FILE):
                 with open(USAGE_FILE, 'r') as f:
                     self.key_usage = json.load(f)
-                    
+
             if os.path.exists(DELETED_KEYS_FILE):
                 with open(DELETED_KEYS_FILE, 'r') as f:
                     self.deleted_keys = json.load(f)
@@ -283,7 +275,7 @@ class KeyManager:
             self.key_usage = {}
             self.deleted_keys = {}
             self.key_logs = []
-    
+
     def save_data(self):
         """Save keys and usage data to files (atomically) and also write a timestamped backup"""
         try:
@@ -319,7 +311,7 @@ class KeyManager:
                 asyncio.run_coroutine_threadsafe(upload_backup_snapshot(payload), loop)
         except Exception:
             pass
-    
+
     def generate_key(self, user_id: int, channel_id: Optional[int] = None, duration_days: int = 30) -> str:
         """Generate a new key for general use"""
         # Generate 10-12 random alphanumeric characters
@@ -327,9 +319,9 @@ class KeyManager:
         import string
         key_length = random.randint(10, 12)
         key = ''.join(random.choices(string.ascii_letters + string.digits, k=key_length))
-        
+
         created_time = int(time.time())
-        
+
         self.keys[key] = {
             "user_id": 0,  # 0 means unassigned - anyone can use it
             "channel_id": channel_id,
@@ -343,21 +335,21 @@ class KeyManager:
             "created_by": user_id,
             "key_type": "general"
         }
-        
+
         self.key_usage[key] = {
             "created": created_time,
             "activated": None,
             "last_used": None,
             "usage_count": 0
         }
-        
+
         self.save_data()
         try:
             self.add_log('generate', key, user_id=user_id, details={'duration_days': duration_days, 'channel_id': channel_id})
         except Exception:
             pass
         return key
-    
+
     def revoke_key(self, key: str) -> bool:
         """Revoke a key"""
         if key in self.keys:
@@ -369,7 +361,7 @@ class KeyManager:
                 pass
             return True
         return False
-    
+
     def delete_key(self, key: str) -> bool:
         """Completely delete a key and move it to deleted database"""
         if key in self.keys:
@@ -377,17 +369,17 @@ class KeyManager:
             key_data = self.keys[key].copy()
             key_data["deleted_at"] = int(time.time())
             key_data["deleted_by"] = "admin"  # You can modify this to track who deleted it
-            
+
             # Move to deleted keys database
             self.deleted_keys[key] = key_data
-            
+
             # Remove from active keys
             del self.keys[key]
-            
+
             # Remove from usage if exists
             if key in self.key_usage:
                 del self.key_usage[key]
-            
+
             self.save_data()
             try:
                 self.add_log('delete', key)
@@ -395,33 +387,33 @@ class KeyManager:
                 pass
             return True
         return False
-    
+
     def is_key_deleted(self, key: str) -> bool:
         """Check if a key has been deleted"""
         return key in self.deleted_keys
-    
+
     def activate_key(self, key: str, machine_id: str, user_id: int) -> Dict:
         """Activate a key for a specific machine"""
         key = normalize_key(key)
         # Check if key is deleted first
         if self.is_key_deleted(key):
             return {"success": False, "error": "No access, deleted key"}
-        
+
         if key not in self.keys:
             return {"success": False, "error": "Invalid key"}
-        
+
         key_data = self.keys[key]
-        
+
         if not key_data["is_active"]:
             return {"success": False, "error": "Access revoked"}
-        
+
         if key_data["machine_id"] and key_data["machine_id"] != machine_id:
             return {"success": False, "error": "Key is already activated on another machine"}
-        
+
         # If already has expiration_time and it's expired, block
         if key_data.get("expiration_time") and key_data["expiration_time"] < int(time.time()):
             return {"success": False, "error": "Key has expired"}
-        
+
         # Activate the key (first-time activation sets activation/expiration)
         now_ts = int(time.time())
         key_data["machine_id"] = machine_id
@@ -432,13 +424,13 @@ class KeyManager:
         if not key_data.get("expiration_time"):
             duration_days = int(key_data.get("duration_days", 30))
             key_data["expiration_time"] = now_ts + (duration_days * 24 * 60 * 60)
-        
+
         # Update usage
         if key in self.key_usage:
             self.key_usage[key]["activated"] = now_ts
             self.key_usage[key]["last_used"] = now_ts
             self.key_usage[key]["usage_count"] += 1
-        
+
         self.save_data()
         # Log activation
         try:
@@ -451,7 +443,7 @@ class KeyManager:
             "expiration_time": key_data["expiration_time"],
             "channel_id": key_data["channel_id"]
         }
-    
+
     def get_key_info(self, key: str) -> Optional[Dict]:
         """Get information about a key"""
         if key in self.keys:
@@ -460,7 +452,7 @@ class KeyManager:
                 key_data.update(self.key_usage[key])
             return key_data
         return None
-    
+
     def get_user_keys(self, user_id: int) -> List[Dict]:
         """Get all keys for a specific user"""
         user_keys = []
@@ -471,7 +463,7 @@ class KeyManager:
                     key_info.update(self.key_usage[key])
                 user_keys.append({"key": key, **key_info})
         return user_keys
-    
+
     def backup_keys(self) -> str:
         """Create a backup of all keys"""
         backup_data = {
@@ -479,12 +471,12 @@ class KeyManager:
             "keys": self.keys,
             "usage": self.key_usage
         }
-        
+
         with open(BACKUP_FILE, 'w') as f:
             json.dump(backup_data, f, indent=2)
-        
+
         return BACKUP_FILE
-    
+
     def build_backup_payload(self) -> dict:
         """Return a JSON-serializable payload of all state for upload/restore."""
         return {
@@ -494,7 +486,7 @@ class KeyManager:
             "deleted": self.deleted_keys,
             "logs": getattr(self, 'key_logs', []),
         }
-    
+
     def restore_from_payload(self, payload: dict) -> bool:
         """Restore state from a payload dict (like one retrieved from backup)."""
         try:
@@ -512,22 +504,22 @@ class KeyManager:
             return True
         except Exception:
             return False
-    
+
     def restore_from_backup(self, backup_file: str) -> bool:
         """Restore keys from a backup file"""
         try:
             with open(backup_file, 'r') as f:
                 backup_data = json.load(f)
-            
+
             self.keys = backup_data["keys"]
             self.key_usage = backup_data["usage"]
-            
+
             self.save_data()
             return True
         except Exception as e:
             print(f"Error restoring from backup: {e}")
             return False
-    
+
     def generate_bulk_keys(self, daily_count: int, weekly_count: int, monthly_count: int, lifetime_count: int) -> Dict:
         """Generate multiple keys of different types"""
         generated_keys = {
@@ -536,12 +528,12 @@ class KeyManager:
             "monthly": [],
             "lifetime": []
         }
-        
+
         # Generate daily keys (1 day)
         for _ in range(daily_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-            
+
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -555,21 +547,21 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-            
+
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-            
+
             generated_keys["daily"].append(key)
-        
+
         # Generate weekly keys (7 days)
         for _ in range(weekly_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-            
+
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -583,21 +575,21 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-            
+
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-            
+
             generated_keys["weekly"].append(key)
-        
+
         # Generate monthly keys (30 days)
         for _ in range(monthly_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-            
+
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -611,21 +603,21 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-            
+
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-            
+
             generated_keys["monthly"].append(key)
-        
+
         # Generate lifetime keys (365 days)
         for _ in range(lifetime_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-            
+
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -639,19 +631,19 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-            
+
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-            
+
             generated_keys["lifetime"].append(key)
-        
+
         self.save_data()
         return generated_keys
-    
+
     def get_available_keys_by_type(self) -> Dict:
         """Get all available (unassigned) keys grouped by type"""
         available_keys = {
@@ -660,7 +652,7 @@ class KeyManager:
             "monthly": [],
             "lifetime": []
         }
-        
+
         for key, data in self.keys.items():
             if data["is_active"] and data["user_id"] == 0:  # Unassigned and active
                 key_type = data.get("key_type", "unknown")
@@ -671,15 +663,15 @@ class KeyManager:
                 }
                 if key_type in available_keys:
                     available_keys[key_type].append(available_entry)
-        
+
         return available_keys
-    
+
     async def send_webhook_notification(self, key: str, user_id: int, machine_id: str, ip: Optional[str] = None):
         """Send webhook notification when a key is activated"""
         try:
             if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE":
                 return
-            
+
             embed = {
                 "title": "🔑 Key Activated",
                 "color": 0x00ff00,
@@ -712,24 +704,24 @@ class KeyManager:
                 ],
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
-            
+
             payload = {
                 "embeds": [embed]
             }
-            
+
             response = requests.post(WEBHOOK_URL, json=payload)
             if response.status_code != 204:
                 print(f"Failed to send webhook notification: {response.status_code}")
-                
+
         except Exception as e:
             print(f"Error sending webhook notification: {e}")
-    
+
     async def send_generated_key_to_webhook(self, key: str, duration_days: int, created_by: str):
         """Send newly generated key to webhook"""
         try:
             if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE":
                 return
-            
+
             embed = {
                 "title": "🔑 New Key Generated",
                 "color": 0x00ff00,
@@ -762,18 +754,18 @@ class KeyManager:
                 ],
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
-            
+
             payload = {
                 "embeds": [embed]
             }
-            
+
             response = requests.post(WEBHOOK_URL, json=payload)
             if response.status_code != 204:
                 print(f"Failed to send generated key to webhook: {response.status_code}")
-                
+
         except Exception as e:
             print(f"Error sending generated key to webhook: {e}")
-    
+
     def get_key_duration_for_selfbot(self, key: str) -> Optional[Dict]:
         """Get key duration info for SelfBot integration"""
         if key in self.keys:
@@ -781,12 +773,12 @@ class KeyManager:
             if key_data["is_active"]:
                 current_time = int(time.time())
                 time_remaining = key_data["expiration_time"] - current_time
-                
+
                 if time_remaining > 0:
                     days = time_remaining // 86400
                     hours = (time_remaining % 86400) // 3600
                     minutes = (time_remaining % 3600) // 60
-                    
+
                     return {
                         "success": True,
                         "duration_days": key_data.get("duration_days", 30),
@@ -863,13 +855,13 @@ async def on_ready():
     print(f'✅ {bot.user} has connected to Discord!')
     print(f'🆔 Bot ID: {bot.user.id}')
     print(f'🌐 Connected to {len(bot.guilds)} guild(s)')
-    
+
     # Set bot status
     await bot.change_presence(activity=discord.Game(name="I Hate Ngas | \\help"))
 
     # Start time for uptime
     bot.start_time = datetime.datetime.utcnow()
-    
+
     print("🤖 Bot is now ready and online!")
     try:
         if not reconcile_roles_task.is_running():
@@ -963,10 +955,10 @@ async def activate_key(interaction: discord.Interaction, key: str):
         # Get machine ID (using user's ID as a simple identifier)
         machine_id = str(interaction.user.id)
         user_id = interaction.user.id
-        
+
         # Attempt to activate the key
         result = key_manager.activate_key(key, machine_id, user_id)
-        
+
         if result["success"]:
             # Give the user the role
             role = interaction.guild.get_role(ROLE_ID)
@@ -975,11 +967,11 @@ async def activate_key(interaction: discord.Interaction, key: str):
                 role_message = f"✅ Role **{role.name}** has been assigned to you!"
             else:
                 role_message = f"✅ You already have the **{role.name}** role!"
-            
+
             # Get key duration info
             key_data = key_manager.get_key_info(key)
             duration_days = key_data.get("duration_days", 30) if key_data else 30
-            
+
             # Force immediate backup upload
             try:
                 print(f"🔄 Triggering backup after key activation for user {interaction.user.id}")
@@ -987,7 +979,7 @@ async def activate_key(interaction: discord.Interaction, key: str):
                 await upload_backup_snapshot(payload)
             except Exception as e:
                 print(f"❌ Backup failed in activate command: {e}")
-            
+
             # Webhook notify
             try:
                 try:
@@ -997,7 +989,7 @@ async def activate_key(interaction: discord.Interaction, key: str):
                 await key_manager.send_webhook_notification(key, user_id, machine_id, ip=user_ip)
             except Exception:
                 pass
-            
+
             # Create embed
             embed = discord.Embed(
                 title="✅ Key Activated",
@@ -1007,13 +999,13 @@ async def activate_key(interaction: discord.Interaction, key: str):
             embed.add_field(name="Role Assigned", value=role_message, inline=False)
             embed.add_field(name="Duration", value=f"{duration_days} days", inline=True)
             embed.add_field(name="Expires", value=f"<t:{result['expiration_time']}:R>", inline=True)
-            
+
             if result.get('channel_id'):
                 embed.add_field(name="Channel Locked", value=f"<#{result['channel_id']}>", inline=True)
-            
+
             embed.set_thumbnail(url=interaction.user.display_avatar.url if interaction.user.display_avatar else None)
             embed.set_footer(text=f"Activated by {interaction.user.display_name}")
-            
+
             await _message(embed=embed)
         else:
             await _message(f"❌ **Activation Failed:** {result['error']}", ephemeral=True)
@@ -1030,28 +1022,28 @@ async def sync_key(interaction: discord.Interaction, key: str):
         if not key_data:
             await _message("❌ Key not found.", ephemeral=True)
             return
-        
+
         if not key_data["is_active"]:
             await _message("❌ Key has been revoked.", ephemeral=True)
             return
-        
+
         # Check if user owns this key
         if key_data["user_id"] != interaction.user.id:
             await _message("❌ This key doesn't belong to you.", ephemeral=True)
             return
-        
+
         duration_days = key_data.get("duration_days", 30)
         expiration_time = key_data["expiration_time"]
         time_remaining = expiration_time - int(time.time())
-        
+
         if time_remaining <= 0:
             await _message("❌ This key has expired.", ephemeral=True)
             return
-        
+
         days = time_remaining // 86400
         hours = (time_remaining % 86400) // 3600
         minutes = (time_remaining % 3600) // 60
-        
+
         embed = discord.Embed(
             title="🔄 Key Sync Information",
             description="Use this information in your SelfBot",
@@ -1061,9 +1053,9 @@ async def sync_key(interaction: discord.Interaction, key: str):
         embed.add_field(name="Duration", value=f"{duration_days} days", inline=True)
         embed.add_field(name="Time Remaining", value=f"{days}d {hours}h {minutes}m", inline=True)
         embed.add_field(name="Expires", value=f"<t:{expiration_time}:F>", inline=False)
-        
+
         await _message(embed=embed, ephemeral=True)
-        
+
     except Exception as e:
         await _message(f"❌ Error syncing key: {str(e)}", ephemeral=True)
 
@@ -1072,10 +1064,10 @@ async def sync_key(interaction: discord.Interaction, key: str):
 @bot.tree.command(name="revoke", description="Revoke a specific key")
 async def revoke_key(interaction: discord.Interaction, key: str):
 	"""Revoke a specific key"""
-	
+
 	if not await check_permissions(interaction):
 		return
-	
+
 	if key_manager.revoke_key(key):
 		# Force immediate backup upload after revoke
 		try:
@@ -1160,35 +1152,35 @@ async def key_info(interaction: discord.Interaction, key: str):
     """Get detailed information about a key"""
     if not await check_permissions(interaction):
         return
-    
+
     key_data = key_manager.get_key_info(key)
     if not key_data:
         await _message("❌ Key not found.", ephemeral=True)
         return
-    
+
     embed = discord.Embed(
         title=f"🔍 Key Information",
         color=0x2d6cdf
     )
-    
+
     # Get user info
     user = interaction.guild.get_member(key_data["created_by"])
     user_name = user.display_name if user else "Unknown User"
-    
+
     embed.add_field(name="Created By", value=user_name, inline=True)
     embed.add_field(name="Status", value="✅ Active" if key_data["is_active"] else "❌ Revoked", inline=True)
     embed.add_field(name="Created", value=("Not activated yet" if not key_data.get('activation_time') else f"<t:{key_data['activation_time']}:R>"), inline=True)
     embed.add_field(name="Expires", value=("Not activated yet" if not key_data.get('expiration_time') else f"<t:{key_data['expiration_time']}:R>"), inline=True)
-    
+
     if key_data["channel_id"]:
         embed.add_field(name="Channel Locked", value=f"<#{key_data['channel_id']}>", inline=True)
-    
+
     if key_data["machine_id"]:
         embed.add_field(name="Machine ID", value=f"`{key_data['machine_id']}`", inline=True)
         embed.add_field(name="Activated", value=f"<t:{key_data['activated']}:R>", inline=True)
-    
+
     embed.add_field(name="Usage Count", value=key_data.get("usage_count", 0), inline=True)
-    
+
     await _message(embed=embed)
 
 @owner_role_only()
@@ -1196,21 +1188,21 @@ async def key_info(interaction: discord.Interaction, key: str):
 @bot.tree.command(name="backup", description="Create a backup of all keys")
 async def backup_keys(interaction: discord.Interaction):
 	"""Create a backup of all keys"""
-	
+
 	if not await check_permissions(interaction):
 		return
-	
+
 	backup_file = key_manager.backup_keys()
-	
+
 	embed = discord.Embed(
 		title="💾 Backup Created",
 		description=f"Keys backup saved to `{backup_file}`",
 		color=0x00ff00
 	)
-	
+
 	embed.add_field(name="Total Keys", value=len(key_manager.keys), inline=True)
 	embed.add_field(name="Backup Time", value=f"<t:{int(time.time())}:F>", inline=True)
-	
+
 	await _message(embed=embed)
 
 @owner_role_only()
@@ -1218,24 +1210,24 @@ async def backup_keys(interaction: discord.Interaction):
 @bot.tree.command(name="restore", description="Restore keys from a backup file")
 async def restore_keys(interaction: discord.Interaction, backup_file: str):
 	"""Restore keys from a backup file"""
-	
+
 	if not await check_permissions(interaction):
 		return
-	
+
 	if not os.path.exists(backup_file):
 		await _message("❌ Backup file not found.", ephemeral=True)
 		return
-	
+
 	if key_manager.restore_from_backup(backup_file):
 		embed = discord.Embed(
 			title="🔄 Backup Restored",
 			description="Keys have been successfully restored from backup.",
 			color=0x00ff00
 		)
-		
+
 		embed.add_field(name="Total Keys", value=len(key_manager.keys), inline=True)
 		embed.add_field(name="Restore Time", value=f"<t:{int(time.time())}:F>", inline=True)
-		
+
 		await _message(embed=embed)
 	else:
 		await _message("❌ Failed to restore from backup.", ephemeral=True)
@@ -1245,29 +1237,29 @@ async def restore_keys(interaction: discord.Interaction, backup_file: str):
 @bot.tree.command(name="status", description="Show bot status and statistics")
 async def bot_status(interaction: discord.Interaction):
 	"""Show bot status and statistics"""
-	
+
 	if not await check_permissions(interaction):
 		return
-	
+
 	total_keys = len(key_manager.keys)
 	active_keys = sum(1 for k in key_manager.keys.values() if k["is_active"])
 	revoked_keys = total_keys - active_keys
-	
+
 	# Calculate total usage
 	total_usage = sum(k.get("usage_count", 0) for k in key_manager.key_usage.values())
-	
+
 	embed = discord.Embed(
 		title="📊 Bot Status",
 		color=0x2d6cdf
 	)
-	
+
 	embed.add_field(name="Total Keys", value=total_keys, inline=True)
 	embed.add_field(name="Active Keys", value=active_keys, inline=True)
 	embed.add_field(name="Revoked Keys", value=revoked_keys, inline=True)
 	embed.add_field(name="Total Usage", value=total_usage, inline=True)
 	embed.add_field(name="Uptime", value=f"<t:{int(bot.start_time.timestamp())}:R>", inline=True)
 	embed.add_field(name="Latency", value=f"{round(bot.latency * 1000)}ms", inline=True)
-	
+
 	await _message(embed=embed)
 
 # New bulk key generation command 
@@ -1276,15 +1268,15 @@ async def bot_status(interaction: discord.Interaction):
 @bot.tree.command(name="generatekeys", description="Generate multiple keys of different types ()")
 async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int, weekly_count: int, monthly_count: int, lifetime_count: int):
     """Generate multiple keys of different types"""
-    
+
     if daily_count < 0 or weekly_count < 0 or monthly_count < 0 or lifetime_count < 0:
         await _message("❌ **Invalid Input:** All counts must be 0 or positive numbers.", ephemeral=True)
         return
-    
+
     if daily_count == 0 and weekly_count == 0 and monthly_count == 0 and lifetime_count == 0:
         await _message("❌ **Invalid Input:** At least one key type must have a count greater than 0.", ephemeral=True)
         return
-    
+
     # Generate the keys
     generated_keys = key_manager.generate_bulk_keys(daily_count, weekly_count, monthly_count, lifetime_count)
 
@@ -1301,15 +1293,15 @@ async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int,
         description="Keys have been generated and saved to the system.",
         color=0x00ff00
     )
-    
+
     embed.add_field(name="📅 Daily Keys (1 day)", value=f"Generated: {len(generated_keys['daily'])}", inline=True)
     embed.add_field(name="📅 Weekly Keys (7 days)", value=f"Generated: {len(generated_keys['weekly'])}", inline=True)
     embed.add_field(name="📅 Monthly Keys (30 days)", value=f"Generated: {len(generated_keys['monthly'])}", inline=True)
     embed.add_field(name="📅 Lifetime Keys (365 days)", value=f"Generated: {len(generated_keys['lifetime'])}", inline=True)
-    
+
     embed.add_field(name="💾 Status", value="✅ All keys saved to database and website", inline=False)
     embed.add_field(name="📱 Website", value="Keys are now available on your website!", inline=False)
-    
+
     await _message(embed=embed, ephemeral=True)
 
 # New command to view available keys by type
@@ -1318,17 +1310,17 @@ async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int,
 @bot.tree.command(name="viewkeys", description="View all available keys by type ()")
 async def view_available_keys(interaction: discord.Interaction):
     """View all available keys grouped by type - """
-    
+
     # Get available keys by type
     available_keys = key_manager.get_available_keys_by_type()
-    
+
     # Create embed showing available keys
     embed = discord.Embed(
         title="🔑 Available Keys by Type",
         description="All unassigned keys currently in the system",
         color=0x2d6cdf
     )
-    
+
     def list_block(items):
         if not items:
             return ["None"]
@@ -1365,7 +1357,7 @@ async def view_available_keys(interaction: discord.Interaction):
     for idx, chunk in enumerate(list_block(lifetime_keys), start=1):
         suffix = f" (part {idx})" if idx > 1 else ""
         embed.add_field(name=f"📅 Lifetime Keys ({len(lifetime_keys)}){suffix}", value=chunk, inline=False)
-    
+
     embed.set_footer(text="Use /generatekeys to create more keys")
     await _message(embed=embed, ephemeral=True)
 
@@ -1374,7 +1366,7 @@ async def view_available_keys(interaction: discord.Interaction):
 @bot.tree.command(name="delete", description="Completely delete a key ()")
 async def delete_key(interaction: discord.Interaction, key: str):
     """Completely delete a key - """
-        
+
     if key_manager.delete_key(key):
         # Force immediate backup upload after delete
         try:
@@ -1401,25 +1393,25 @@ async def delete_key(interaction: discord.Interaction, key: str):
 @bot.tree.command(name="deletedkeys", description="View all deleted keys ()")
 async def view_deleted_keys(interaction: discord.Interaction):
     """View all deleted keys - """
-    
+
     deleted_keys = key_manager.deleted_keys
-    
+
     if not deleted_keys:
         await _message("📭 No deleted keys found.", ephemeral=True)
         return
-    
+
     embed = discord.Embed(
         title="🗑️ Deleted Keys Database",
         description=f"Total deleted keys: {len(deleted_keys)}",
         color=0xff0000
     )
-    
+
     # Show first 10 deleted keys
     for i, (key, data) in enumerate(list(deleted_keys.items())[:10]):
         deleted_time = f"<t:{data.get('deleted_at', 0)}:R>"
         created_time = f"<t:{data.get('activation_time', 0)}:R>"
         duration = data.get('duration_days', 'Unknown')
-        
+
         lines_val = [
             f"Duration: {duration} days",
             f"Created: {created_time}",
@@ -1430,17 +1422,17 @@ async def view_deleted_keys(interaction: discord.Interaction):
             value="\n".join(lines_val),
             inline=True
         )
-    
+
     if len(deleted_keys) > 10:
         embed.set_footer(text=f"Showing 10 of {len(deleted_keys)} deleted keys")
-    
+
     await _message(embed=embed, ephemeral=True)
 
 @owner_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activekeys", description="List all active keys with remaining time and assigned user")
 async def active_keys(interaction: discord.Interaction):
-	
+
 	if not await check_permissions(interaction):
 		return
 
@@ -1484,7 +1476,7 @@ async def active_keys(interaction: discord.Interaction):
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="expiredkeys", description="List expired keys")
 async def expired_keys(interaction: discord.Interaction):
-	
+
 	if not await check_permissions(interaction):
 		return
 	now = int(time.time())
@@ -1517,7 +1509,7 @@ async def expired_keys(interaction: discord.Interaction):
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="swapmachineid", description="Swap a user's active key to a new machine ID ()")
 async def swap_machine_id(interaction: discord.Interaction, user: discord.Member, new_machine_id: str):
-	
+
 	if not await check_permissions(interaction):
 		return
 	try:
@@ -1698,127 +1690,164 @@ def start_health_check():
                 bound_ok = True
         return bound_ok if machine_id else has_active
 
-class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
-    def do_HEAD(self):
-        if self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            return
-        self.send_response(404)
-        self.end_headers()
-
-    def do_GET(self):
-        try:
-            # Session check (kept for potential future use)
-            cookies = _parse_cookies(self.headers.get('Cookie'))
-            session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
-            authed_uid = int(session.get('user_id')) if session else None
-            authed_mid = str(session.get('machine_id')) if session else None
-            authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
-
-            # --- Place all your GET endpoint logic here ---
-            # For example:
-            # if self.path == '/generate-form':
-            #     ... (your handler code) ...
-            # if self.path.startswith('/keys'):
-            #     ... (your handler code) ...
-            # etc.
-            # Make sure all your if self.path ... blocks are indented 8 spaces from the left (4 spaces from try:)
-
-        except Exception as e:
-            try:
-                self.send_response(500)
-                self.send_header('Content-type', 'text/plain')
+    class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            if self.path == '/':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
                 self.end_headers()
-                self.wfile.write(f"Internal Server Error: {e}".encode())
-            except Exception:
-                pass
-
-    def do_POST(self):
-        try:
-            # --- Place all your POST endpoint logic here ---
-            # For example:
-            # if self.path == '/generate':
-            #     ... (your handler code) ...
-            # etc.
-            pass
-        except Exception as e:
-            try:
-                self.send_response(500)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(f"Internal Server Error: {e}".encode())
-            except Exception:
-                pass
-
-            form_html = f"""
-            <html><head><title>Generate Keys</title>
-              <style>
-                :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
-                * {{ box-sizing: border-box; }}
-                body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
-                header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
-                a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
-                a.nav:hover {{ background:#1e154d }}
-                main {{ padding:24px; max-width:1100px; margin:0 auto }}
-                .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
-                .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
-                label {{ display:block; margin:10px 0 6px }}
-                input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
-                input[type=number] {{ width:120px }}
-                button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
-                button:hover {{ filter:brightness(0.95) }}
-                ul {{ margin:8px 0 0 20px }}
-                code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
-                .muted {{ color:#a4b1d6 }}
-              </style>
-            </head>
-            <body>
-              <header>
-                <div class='brand' style='font-size:22px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
-                <a class='nav' href='/'>Dashboard</a>
-                <a class='nav' href='/keys'>Keys</a>
-                <a class='nav' href='/my'>My Keys</a>
-                <a class='nav' href='/deleted'>Deleted</a>
-                <a class='nav' href='/backup'>Backup</a>
-                <a class='nav' href='/generate-form'>Generate</a>
-              </header>
-              <main>
-                <div class='layout'>
-                  <div class='card'>
-                    <h2>Generate Keys</h2>
-                    <form method='POST' action='/generate'>
-                      <label>Daily</label><input type='number' name='daily' min='0' value='0'/>
-                      <label>Weekly</label><input type='number' name='weekly' min='0' value='0'/>
-                      <label>Monthly</label><input type='number' name='monthly' min='0' value='0'/>
-                      <label>Lifetime</label><input type='number' name='lifetime' min='0' value='0'/>
-                      <div style='margin-top:12px'>
-                        <button type='submit'>Generate</button>
-                      </div>
-                    </form>
-                  </div>
-                  <div class='card'>
-                    <div>
-                      <h3 style='display:inline'>Last Generated</h3>
-                      <form method='GET' action='/generate-form' style='display:inline'>
-                        <button class='closebtn' title='Close panel'>&times;</button>
-                      </form>
-                    </div>
-                    {block('Daily', lg.get('daily', []))}
-                    {block('Weekly', lg.get('weekly', []))}
-                    {block('Monthly', lg.get('monthly', []))}
-                    {block('Lifetime', lg.get('lifetime', []))}
-                  </div>
-                </div>
-              </main>
-            </body></html>
-            """
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
+                return
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(form_html.encode())
-            return
+
+        def do_GET(self):
+            try:
+                # Session check (kept for potential future use)
+                cookies = _parse_cookies(self.headers.get('Cookie'))
+                session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
+                authed_uid = int(session.get('user_id')) if session else None
+                authed_mid = str(session.get('machine_id')) if session else None
+                authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
+
+                # Public panel: no login gating; remove legacy commented block
+
+                if self.path.startswith('/login'):
+                    # Redirect away from legacy login to the dashboard (no login used)
+                    self.send_response(303)
+                    self.send_header('Location', '/')
+                    self.end_headers()
+                    return
+
+                if self.path == '/logout':
+                    self.send_response(303)
+                    self.send_header('Set-Cookie', 'panel_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0')
+                    self.send_header('Location', '/login')
+                    self.end_headers()
+                    return
+
+                if self.path == '/sender':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    page = f"""
+                    <html><head><title>Message Sender</title>
+                      <style>
+                        body{{font-family:Inter,Arial,sans-serif;background:#0b1020;color:#e6e9f0;margin:0}}
+                        header{{background:#0e1630;border-bottom:1px solid #1f2a4a;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+                        main{{padding:24px;max-width:720px;margin:0 auto}}
+                        .card{{background:#0e1630;border:1px solid #1f2a4a;border-radius:12px;padding:20px}}
+                        label{{display:block;margin:10px 0 6px}}
+                        input,textarea,button{{padding:10px 12px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#e6e9f0;width:100%}}
+                        textarea{{min-height:140px;resize:vertical}}
+                        button{{cursor:pointer;background:#2a5bff;border-color:#2a5bff;width:auto}}
+                        button:hover{{background:#2248cc}}
+                        a.nav{{color:#9ab0ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#121a36}}
+                        a.nav:hover{{background:#1a2448}}
+                      </style>
+                    </head>
+                    <body>
+                      <header>
+                        <a class='nav' href='/'>Dashboard</a>
+                        <a class='nav' href='/keys'>Keys</a>
+                        <a class='nav' href='/my'>My Keys</a>
+                        <a class='nav' href='/sender'>Sender</a>
+                        <a class='nav' href='/logout'>Logout</a>
+                      </header>
+                      <main>
+                        <div class='card'>
+                          <h2>Send a Message</h2>
+                          <form method='POST' action='/sender'>
+                            <label>Channel ID</label>
+                            <input type='text' name='channel_id' placeholder='Target channel ID' required />
+                            <label>Message</label>
+                            <textarea name='content' placeholder='Type your message...' required></textarea>
+                            <div style='margin-top:12px'><button type='submit'>Send</button></div>
+                          </form>
+                          <p class='muted' style='margin-top:10px'>Messages are sent by the bot and require the bot to have permission in the channel.</p>
+                        </div>
+                      </main>
+                    </body></html>
+                    """
+                    self.wfile.write(page.encode())
+                    return
+
+                # Simple HTML form for generating keys
+                if self.path == '/generate-form':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    # Build sidebar content for last generated keys
+                    lg = key_manager.last_generated or {"daily":[],"weekly":[],"monthly":[],"lifetime":[]}
+                    def block(name, arr):
+                        if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
+                        lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
+                        more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr)>50 else ''
+                        return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
+
+                    form_html = f"""
+                    <html><head><title>Generate Keys</title>
+                      <style>
+                        :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
+                        * {{ box-sizing: border-box; }}
+                        body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
+                        header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
+                        a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
+                        a.nav:hover {{ background:#1e154d }}
+                        main {{ padding:24px; max-width:1100px; margin:0 auto }}
+                        .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
+                        .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
+                        label {{ display:block; margin:10px 0 6px }}
+                        input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
+                        input[type=number] {{ width:120px }}
+                        button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
+                        button:hover {{ filter:brightness(0.95) }}
+                        ul {{ margin:8px 0 0 20px }}
+                        code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
+                        .muted {{ color:#a4b1d6 }}
+                      </style>
+                    </head>
+                    <body>
+                      <header>
+                        <div class='brand' style='font-size:22px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
+                        <a class='nav' href='/'>Dashboard</a>
+                        <a class='nav' href='/keys'>Keys</a>
+                        <a class='nav' href='/my'>My Keys</a>
+                        <a class='nav' href='/deleted'>Deleted</a>
+                        <a class='nav' href='/backup'>Backup</a>
+                        <a class='nav' href='/generate-form'>Generate</a>
+                      </header>
+                      <main>
+                        <div class='layout'>
+                          <div class='card'>
+                            <h2>Generate Keys</h2>
+                            <form method='POST' action='/generate'>
+                              <label>Daily</label><input type='number' name='daily' min='0' value='0'/>
+                              <label>Weekly</label><input type='number' name='weekly' min='0' value='0'/>
+                              <label>Monthly</label><input type='number' name='monthly' min='0' value='0'/>
+                              <label>Lifetime</label><input type='number' name='lifetime' min='0' value='0'/>
+                              <div style='margin-top:12px'>
+                                <button type='submit'>Generate</button>
+                              </div>
+                            </form>
+                          </div>
+                          <div class='card'>
+                            <div>
+                              <h3 style='display:inline'>Last Generated</h3>
+                              <form method='GET' action='/generate-form' style='display:inline'>
+                                <button class='closebtn' title='Close panel'>&times;</button>
+                              </form>
+                            </div>
+                            {block('Daily', lg.get('daily', []))}
+                            {block('Weekly', lg.get('weekly', []))}
+                            {block('Monthly', lg.get('monthly', []))}
+                            {block('Lifetime', lg.get('lifetime', []))}
+                          </div>
+                        </div>
+                      </main>
+                    </body></html>
+                    """
+                    self.wfile.write(form_html.encode())
+                    return
 
                 if self.path.startswith('/keys'):
                     # Filters
@@ -3068,7 +3097,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
                         return
-                
+
                 # Selfbot heartbeat: mark user active with timestamp
                 if self.path == '/api/selfbot-heartbeat':
                     try:
@@ -3099,7 +3128,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
                         return
-                
+
                 # Active users count
                 if self.path == '/api/active-users':
                     try:
@@ -3132,7 +3161,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(f"Internal Server Error: {e}".encode())
                 except Exception:
                     pass
-    
+
     try:
         # Use Render's PORT environment variable or default to 8080
         port = int(os.getenv('PORT', 8080))
@@ -3249,6 +3278,14 @@ async def leaderboard(interaction: discord.Interaction):
     )
     await _message(embed=embed, ephemeral=True)
 
+    ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
+PLAN_PRICING = {
+    "daily": 3,
+    "weekly": 10,
+    "monthly": 15,
+    "lifetime": 30
+}
+
 pending_payments = {}
 
 async def issue_key(plan: str) -> str:
@@ -3273,7 +3310,7 @@ class PlanSelect(discord.ui.Select):
         super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        try:
+         try:
             view: "AutoBuyView" = self.view # type: ignore
             view.selected_plan = self.values[0]
             view.switch_to_crypto()
@@ -3289,7 +3326,7 @@ class PlanSelect(discord.ui.Select):
 class CryptoSelect(discord.ui.Select):
     CRYPTO_MINIMUMS = {
         "BTC": (0.0001, 7.0),
-        "ETH(not working atm)": (0.003, 5.5),
+        "ETH": (0.003, 5.5),
         "LTC": (0.05, 3.5),
         "USDC": (3.0, 3.0),
         "USDTERC20": (3.0, 3.0),
@@ -3430,21 +3467,11 @@ async def autobuy(interaction: discord.Interaction):
     view = AutoBuyView(interaction.user.id)
     await interaction.response.send_message("Select a plan:", view=view, ephemeral=True)
 
-@owner_role_only()
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="generateadminkey", description="Generate an admin key for website access")
-async def generate_admin_key(interaction: discord.Interaction):
-    import random, string
-    key = ''.join(random.choices(string.ascii_letters + string.digits, k=24))
-    admin_keys.add(key)
-    save_admin_keys(admin_keys)
-    await _message(f"🔑 **Admin Key Generated:**\n```\n{key}\n```\nUse this key to unlock the website generator.", ephemeral=True)
-
 # Run the bot
 if __name__ == "__main__":
     print("🚀 Starting Discord Bot...")
     print("=" * 40)
-    
+
     # Start health check server in a separate thread
     health_thread = threading.Thread(target=start_health_check, daemon=True)
     health_thread.start()
@@ -3643,4 +3670,3 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
-		await _message(f"❌ Swap failed: {e}", ephemeral=True) 
