@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ext import tasks
+import aiohttp
 import json
 import uuid
 import time
@@ -3677,4 +3678,5 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
+
 		await _message(f"❌ Swap failed: {e}", ephemeral=True) 
