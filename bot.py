@@ -1725,13 +1725,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(f"Internal Server Error: {e}".encode())
             except Exception:
-                pass:
-
-            # Build sidebar content for last generated keys
-                if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
-                lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
-                more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr) > 50 else ''
-                return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
+                pass
 
             form_html = f"""
             <html><head><title>Generate Keys</title>
