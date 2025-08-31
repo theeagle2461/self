@@ -934,15 +934,15 @@ class CryptoSelect(discord.ui.Select):
         super().__init__(placeholder="Select a cryptocurrency", min_values=1, max_values=1, options=options)
     
     async def callback(self, interaction: discord.Interaction):
-    view: "AutoBuyView" = self.view # type: ignore
-    chosen_currency = self.values[0]
-    min_amount, min_usd = self.CRYPTO_MINIMUMS.get(chosen_currency, (None, None))
-    warning = (
-        f"⛔ **Minimum send for {chosen_currency}: {min_amount} {chosen_currency} (${min_usd} USD)**"
-        if min_amount and min_usd else ""
-    )
-    # Immediately create invoice and show warning under it
-    await view.create_invoice_and_reply(interaction, chosen_currency, ephemeral=True, extra_warning=warning)
+        view: "AutoBuyView" = self.view # type: ignore
+        chosen_currency = self.values[0]
+        min_amount, min_usd = self.CRYPTO_MINIMUMS.get(chosen_currency, (None, None))
+        warning = (
+            f"⛔ **Minimum send for {chosen_currency}: {min_amount} {chosen_currency} (${min_usd} USD)**"
+            if min_amount and min_usd else ""
+        )
+        # Immediately create invoice and show warning under it
+        await view.create_invoice_and_reply(interaction, chosen_currency, ephemeral=True, extra_warning=warning)
 class AutoBuyView(discord.ui.View):
     def __init__(self, requester_id: int, timeout: Optional[float] = 180):
         super().__init__(timeout=timeout)
