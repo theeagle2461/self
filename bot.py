@@ -1518,30 +1518,31 @@ async def expired_keys(interaction: discord.Interaction):
 @bot.tree.command(name="swapmachineid", description="Swap a user's active key to a new machine ID ()")
 async def swap_machine_id(interaction: discord.Interaction, user: discord.Member, new_machine_id: str):
 
-	if not await check_permissions(interaction):
-		return
-	try:
-		# Find the user's active key
-		key = None
-		for k, data in key_manager.keys.items():
-			if data.get('user_id') == user.id and data.get('is_active', False):
-				key = k
-				break
-		if not key:
-			await _message("❌ No active key found for that user.", ephemeral=True)
-			return
-		# Update the machine_id
-		data = key_manager.keys[key]
-		data['machine_id'] = str(new_machine_id)
-		# Save
-		key_manager.save_data()
-		try:
-			key_manager.add_log('rebind', key, user_id=str(user.id), details={'machine_id': str(new_machine_id)})
-		except Exception:
-			pass
-		await _message(f"✅ Machine ID swapped for user {user.mention}.", ephemeral=True)
-	except Exception as e:
-		await _message(f"❌ Failed: {e}", ephemeral=True)
+    if not await check_permissions(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)  # <-- Fixed indentation here
+    try:
+        # Find the user's active key
+        key = None
+        for k, data in key_manager.keys.items():
+            if data.get('user_id') == user.id and data.get('is_active', False):
+                key = k
+                break
+        if not key:
+            await _message("❌ No active key found for that user.", ephemeral=True)
+            return
+        # Update the machine_id
+        data = key_manager.keys[key]
+        data['machine_id'] = str(new_machine_id)
+        # Save
+        key_manager.save_data()
+        try:
+            key_manager.add_log('rebind', key, user_id=str(user.id), details={'machine_id': str(new_machine_id)})
+        except Exception:
+            pass
+        await _message(f"✅ Machine ID swapped for user {user.mention}.", ephemeral=True)
+    except Exception as e:
+        await _message(f"❌ Failed: {e}", ephemeral=True)
 
 @owner_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -3671,4 +3672,4 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
-		pass
+        pass
