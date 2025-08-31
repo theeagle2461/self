@@ -953,7 +953,8 @@ async def check_permissions(interaction) -> bool:
         return True
     # For all other commands, require admin role
     has_admin_role = ADMIN_ROLE_ID in [role.id for role in member.roles]
-    return has_admin_role
+    has_owner_role = OWNER_ROLE_ID in [role.id for role in member.roles]
+    return has_admin_role or has_owner_role
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activate", description="Activate a key and get the user role")
