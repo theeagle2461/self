@@ -37,6 +37,29 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # Note: discord.py automatically creates bot.tree, no need to manually create it
 
+NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY", "YOUR_NOWPAYMENTS_API_KEY")
+NOWPAYMENTS_API_BASE = "https://api.nowpayments.io"
+
+class NowPaymentsClient:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    async def create_invoice(self, session, price_amount, plan, order_id, pay_currency):
+        url = f"{NOWPAYMENTS_API_BASE}/v1/invoice"
+        headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
+        payload = {
+            "price_amount": price_amount,
+            "price_currency": "usd",
+            "pay_currency": pay_currency,
+            "order_id": order_id,
+            "order_description": f"{plan} key"
+        }
+        async with session.post(url, headers=headers, json=payload) as resp:
+            data = await resp.json()
+            return data
+
+_np_client = NowPaymentsClient(NOWPAYMENTS_API_KEY)
+
 # Configuration
 GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
 ROLE_ID = 1404221578782183556
@@ -3262,6 +3285,19 @@ PLAN_PRICING = {
     "monthly": 15,
     "lifetime": 30
 }
+
+pending_payments = {}
+
+async def issue_key(plan: str) -> str:
+    # You can customize this to use your KeyManager logic
+    duration = {
+        "daily": 1,
+        "weekly": 7,
+        "monthly": 30,
+        "lifetime": 365
+    }.get(plan, 30)
+    # Replace 0 with the user_id if you want to assign the key to the user
+    return key_manager.generate_key(user_id=0, duration_days=duration)
 
 class PlanSelect(discord.ui.Select):
     def __init__(self):
