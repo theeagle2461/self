@@ -25,6 +25,7 @@ import requests
 import urllib.parse
 import html
 import io
+import aiohttp
 
 # Bot configuration
 intents = discord.Intents.default()
