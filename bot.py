@@ -918,24 +918,6 @@ async def callback(self, interaction: discord.Interaction):
     else:
         await view.create_invoice_and_reply(interaction, chosen_currency=None)
 
-class ConfirmCryptoView(discord.ui.View):
-    def __init__(self, parent_view, coin_name, min_amount, min_usd, chosen_currency):
-        super().__init__(timeout=60)
-        self.parent_view = parent_view
-        self.coin_name = coin_name
-        self.min_amount = min_amount
-        self.min_usd = min_usd
-        self.chosen_currency = chosen_currency
-
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Send invoice in chat, only visible to the user (ephemeral)
-        await self.parent_view.create_invoice_and_reply(interaction, self.chosen_currency, ephemeral=True)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="Cancelled.", view=None)
-
 class CryptoSelect(discord.ui.Select):
     # Minimums for each crypto (update as needed)
     CRYPTO_MINIMUMS = {
@@ -952,15 +934,15 @@ class CryptoSelect(discord.ui.Select):
         super().__init__(placeholder="Select a cryptocurrency", min_values=1, max_values=1, options=options)
     
     async def callback(self, interaction: discord.Interaction):
-        view: "AutoBuyView" = self.view # type: ignore
-        chosen_currency = self.values[0]
-        min_amount, min_usd = self.CRYPTO_MINIMUMS.get(chosen_currency, (None, None))
-        warning = (
-            f"⛔ Stop, **{chosen_currency}** has a minimum send amount of **{min_amount} {chosen_currency}** "
-            f"(${min_usd} USD). Continue?"
-        )
-        await interaction.response.edit_message(
-            content=warning,
+    view: "AutoBuyView" = self.view # type: ignore
+    chosen_currency = self.values[0]
+    min_amount, min_usd = self.CRYPTO_MINIMUMS.get(chosen_currency, (None, None))
+    warning = (
+        f"⛔ **Minimum send for {chosen_currency}: {min_amount} {chosen_currency} (${min_usd} USD)**"
+        if min_amount and min_usd else ""
+    )
+    # Immediately create invoice and show warning under it
+    await view.create_invoice_and_reply(interaction, chosen_currency, ephemeral=True, extra_warning=warning)
             view=ConfirmCryptoView(view, chosen_currency, min_amount, min_usd, chosen_currency)
         )
 class AutoBuyView(discord.ui.View):
@@ -977,7 +959,7 @@ class AutoBuyView(discord.ui.View):
         self.clear_items()
         self.add_item(CryptoSelect())
     
-    async def create_invoice_and_reply(self, interaction: discord.Interaction, chosen_currency: Optional[str], ephemeral: bool = False):
+    async def create_invoice_and_reply(self, interaction: discord.Interaction, chosen_currency: Optional[str], ephemeral: bool = False, extra_warning: str = ""):
         if not _np_client:
             if not interaction.response.is_done():
                 await interaction.response.edit_message(content="Payments unavailable right now.", view=None)
@@ -1044,8 +1026,9 @@ class AutoBuyView(discord.ui.View):
             "timestamp": time.time(),
             "order_id": order_id,
         }
-        
         msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation."
+if extra_warning:
+    msg += f"\n\n{extra_warning}"
         if not interaction.response.is_done():
             if ephemeral:
                 await interaction.response.edit_message(content=msg, view=None)
