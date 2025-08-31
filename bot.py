@@ -906,7 +906,7 @@ class PlanSelect(discord.ui.Select):
         ]
         super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
     
-    async def callback(self, interaction: discord.Interaction):
+async def callback(self, interaction: discord.Interaction):
     view: "AutoBuyView" = self.view # type: ignore
     view.selected_plan = self.values[0]
     if ALLOWED_PAY_CURRENCIES:
