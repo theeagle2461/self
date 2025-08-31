@@ -3326,7 +3326,7 @@ class PlanSelect(discord.ui.Select):
 class CryptoSelect(discord.ui.Select):
     CRYPTO_MINIMUMS = {
         "BTC": (0.0001, 7.0),
-        "ETH": (0.003, 5.5),
+        "ETH(not working atm)": (0.003, 5.5),
         "LTC": (0.05, 3.5),
         "USDC": (3.0, 3.0),
         "USDTERC20": (3.0, 3.0),
