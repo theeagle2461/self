@@ -224,6 +224,31 @@ def save_config() -> None:
 
         async def upload_backup_snapshot(payload: dict) -> None:
     """Upload a JSON snapshot to the configured Discord backup channel and webhook."""
+    # Send to channel as file attachment, if configured
+    try:
+        if BACKUP_CHANNEL_ID > 0:
+            channel = bot.get_channel(BACKUP_CHANNEL_ID)
+            if channel:
+                data = json.dumps(payload, indent=2).encode()
+                file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
+                await channel.send(content="🔄 Automatic backup after key operation", file=file)
+                print(f"✅ Backup uploaded to channel {BACKUP_CHANNEL_ID}")
+            else:
+                print(f"⚠️ Backup channel {BACKUP_CHANNEL_ID} not found")
+        else:
+            print("⚠️ No backup channel configured")
+    except Exception as e:
+        print(f"❌ Backup to channel failed: {e}")
+    # Send to webhook as JSON payload, if provided
+    try:
+        url = (BACKUP_WEBHOOK_URL or '').strip()
+        if url:
+            data = json.dumps(payload, indent=2).encode()
+            files = {"file": (f"backup_{int(time.time())}.json", io.BytesIO(data), "application/json")}
+            requests.post(url, files=files, timeout=15)
+            print("✅ Backup sent to webhook")
+    except Exception as e:
+        print(f"❌ Backup to webhook failed: {e}")
 
 # Initialize key manager (moved below after class definition)
 # Load config and apply overrides
@@ -3582,34 +3607,3 @@ async def periodic_backup_task():
         await upload_backup_snapshot(payload)
     except Exception:
         pass
-
-# ---------------------- TEXT COMMAND FALLBACKS ----------------------
-
-
-async def upload_backup_snapshot(payload: dict) -> None:
-    """Upload a JSON snapshot to the configured Discord backup channel and webhook."""
-    # Send to channel as file attachment, if configured
-    try:
-        if BACKUP_CHANNEL_ID > 0:
-            channel = bot.get_channel(BACKUP_CHANNEL_ID)
-            if channel:
-                data = json.dumps(payload, indent=2).encode()
-                file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
-                await channel.send(content="🔄 Automatic backup after key operation", file=file)
-                print(f"✅ Backup uploaded to channel {BACKUP_CHANNEL_ID}")
-            else:
-                print(f"⚠️ Backup channel {BACKUP_CHANNEL_ID} not found")
-        else:
-            print("⚠️ No backup channel configured")
-    except Exception as e:
-        print(f"❌ Backup to channel failed: {e}")
-    # Send to webhook as JSON payload, if provided
-    try:
-        url = (BACKUP_WEBHOOK_URL or '').strip()
-        if url:
-            data = json.dumps(payload, indent=2).encode()
-            files = {"file": (f"backup_{int(time.time())}.json", io.BytesIO(data), "application/json")}
-            requests.post(url, files=files, timeout=15)
-            print("✅ Backup sent to webhook")
-    except Exception as e:
-        print(f"❌ Backup to webhook failed: {e}")
