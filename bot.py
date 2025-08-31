@@ -10,7 +10,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ext import tasks
-import aiohttp
 import json
 import uuid
 import time
@@ -965,17 +964,8 @@ class AutoBuyView(discord.ui.View):
             if public_url:
                 ipn_callback_url = f"{public_url.rstrip('/')}{IPN_ENDPOINT}"
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                data = await _np_client.create_invoice(
-                    session=session,
-                    price_amount=price,
-                    plan=self.selected_plan,
-                    order_id=order_id,
-                    pay_currency=pay_currency, # None => NOWPayments shows enabled methods
-                    ipn_callback_url=ipn_callback_url,
-                )
-        except Exception:
+        except Exception as e:
+            print(f"Failed to create invoice: {e}")  # <-- Add this line for debugging
             return await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
         
         invoice_id = str(data.get("id") or data.get("invoice_id") or data.get("order_id") or "unknown")
@@ -3678,5 +3668,4 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
-
 		await _message(f"❌ Swap failed: {e}", ephemeral=True) 
