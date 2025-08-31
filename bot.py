@@ -1710,96 +1710,100 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            # ... your /generate-form and other GET logic here ...
-            if self.path == '/generate-form':
-                # (admin key check and HTML form code here)
-                # ... (see previous messages for full block) ...
+            # Session check (kept for potential future use)
+            cookies = _parse_cookies(self.headers.get('Cookie'))
+            session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
+            authed_uid = int(session.get('user_id')) if session else None
+            authed_mid = str(session.get('machine_id')) if session else None
+            authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
+
+        # /generate-form (admin key required)
+        if self.path == '/generate-form':
+            parsed = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(parsed.query or '')
+            adminkey = (q.get('adminkey', [''])[0] or '').strip()
+            if not adminkey or adminkey not in admin_keys:
+                self.send_response(403)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
                 return
-            # ... other GET endpoints ...
-        except Exception as e:
-            # ... error handling ...
-            pass
-                # Session check (kept for potential future use)
-                cookies = _parse_cookies(self.headers.get('Cookie'))
-                session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
-                authed_uid = int(session.get('user_id')) if session else None
-                authed_mid = str(session.get('machine_id')) if session else None
-                authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
 
-                # Public panel: no login gating; remove legacy commented block
+            # Build sidebar content for last generated keys
+            lg = key_manager.last_generated or {"daily": [], "weekly": [], "monthly": [], "lifetime": []}
+            def block(name, arr):
+                if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
+                lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
+                more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr) > 50 else ''
+                return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
 
-                if self.path.startswith('/login'):
-                    # Redirect away from legacy login to the dashboard (no login used)
-                    self.send_response(303)
-                    self.send_header('Location', '/')
-                    self.end_headers()
-                    return
-
-                if self.path == '/logout':
-                    self.send_response(303)
-                    self.send_header('Set-Cookie', 'panel_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0')
-                    self.send_header('Location', '/login')
-                    self.end_headers()
-                    return
-
-                if self.path == '/sender':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    page = f"""
-                    <html><head><title>Message Sender</title>
-                      <style>
-                        body{{font-family:Inter,Arial,sans-serif;background:#0b1020;color:#e6e9f0;margin:0}}
-                        header{{background:#0e1630;border-bottom:1px solid #1f2a4a;padding:16px 24px;display:flex;gap:16px;align-items:center}}
-                        main{{padding:24px;max-width:720px;margin:0 auto}}
-                        .card{{background:#0e1630;border:1px solid #1f2a4a;border-radius:12px;padding:20px}}
-                        label{{display:block;margin:10px 0 6px}}
-                        input,textarea,button{{padding:10px 12px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#e6e9f0;width:100%}}
-                        textarea{{min-height:140px;resize:vertical}}
-                        button{{cursor:pointer;background:#2a5bff;border-color:#2a5bff;width:auto}}
-                        button:hover{{background:#2248cc}}
-                        a.nav{{color:#9ab0ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#121a36}}
-                        a.nav:hover{{background:#1a2448}}
-                      </style>
-                    </head>
-                    <body>
-                      <header>
-                        <a class='nav' href='/'>Dashboard</a>
-                        <a class='nav' href='/keys'>Keys</a>
-                        <a class='nav' href='/my'>My Keys</a>
-                        <a class='nav' href='/sender'>Sender</a>
-                        <a class='nav' href='/logout'>Logout</a>
-                      </header>
-                      <main>
-                        <div class='card'>
-                          <h2>Send a Message</h2>
-                          <form method='POST' action='/sender'>
-                            <label>Channel ID</label>
-                            <input type='text' name='channel_id' placeholder='Target channel ID' required />
-                            <label>Message</label>
-                            <textarea name='content' placeholder='Type your message...' required></textarea>
-                            <div style='margin-top:12px'><button type='submit'>Send</button></div>
-                          </form>
-                          <p class='muted' style='margin-top:10px'>Messages are sent by the bot and require the bot to have permission in the channel.</p>
-                        </div>
-                      </main>
-                    </body></html>
-                    """
-                    self.wfile.write(page.encode())
-                    return
-
-                # Simple HTML form for generating keys
-if self.path == '/generate-form':
-    # Require admin key in query (?adminkey=...)
-    parsed = urllib.parse.urlparse(self.path)
-    q = urllib.parse.parse_qs(parsed.query or '')
-    adminkey = (q.get('adminkey', [''])[0] or '').strip()
-    if not adminkey or adminkey not in admin_keys:
-        self.send_response(403)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
-        return
+            form_html = f"""
+            <html><head><title>Generate Keys</title>
+              <style>
+                :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
+                * {{ box-sizing: border-box; }}
+                body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
+                header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
+                a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
+                a.nav:hover {{ background:#1e154d }}
+                main {{ padding:24px; max-width:1100px; margin:0 auto }}
+                .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
+                .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
+                label {{ display:block; margin:10px 0 6px }}
+                input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
+                input[type=number] {{ width:120px }}
+                button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
+                button:hover {{ filter:brightness(0.95) }}
+                ul {{ margin:8px 0 0 20px }}
+                code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
+                .muted {{ color:#a4b1d6 }}
+              </style>
+            </head>
+            <body>
+              <header>
+                <div class='brand' style='font-size:22px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
+                <a class='nav' href='/'>Dashboard</a>
+                <a class='nav' href='/keys'>Keys</a>
+                <a class='nav' href='/my'>My Keys</a>
+                <a class='nav' href='/deleted'>Deleted</a>
+                <a class='nav' href='/backup'>Backup</a>
+                <a class='nav' href='/generate-form'>Generate</a>
+              </header>
+              <main>
+                <div class='layout'>
+                  <div class='card'>
+                    <h2>Generate Keys</h2>
+                    <form method='POST' action='/generate'>
+                      <label>Daily</label><input type='number' name='daily' min='0' value='0'/>
+                      <label>Weekly</label><input type='number' name='weekly' min='0' value='0'/>
+                      <label>Monthly</label><input type='number' name='monthly' min='0' value='0'/>
+                      <label>Lifetime</label><input type='number' name='lifetime' min='0' value='0'/>
+                      <div style='margin-top:12px'>
+                        <button type='submit'>Generate</button>
+                      </div>
+                    </form>
+                  </div>
+                  <div class='card'>
+                    <div>
+                      <h3 style='display:inline'>Last Generated</h3>
+                      <form method='GET' action='/generate-form' style='display:inline'>
+                        <button class='closebtn' title='Close panel'>&times;</button>
+                      </form>
+                    </div>
+                    {block('Daily', lg.get('daily', []))}
+                    {block('Weekly', lg.get('weekly', []))}
+                    {block('Monthly', lg.get('monthly', []))}
+                    {block('Lifetime', lg.get('lifetime', []))}
+                  </div>
+                </div>
+              </main>
+            </body></html>
+            """
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(form_html.encode())
+            return
 
     # Build sidebar content for last generated keys
     lg = key_manager.last_generated or {"daily": [], "weekly": [], "monthly": [], "lifetime": []}
@@ -1809,73 +1813,6 @@ if self.path == '/generate-form':
         more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr) > 50 else ''
         return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
 
-    form_html = f"""
-    <html><head><title>Generate Keys</title>
-      <style>
-        :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
-        * {{ box-sizing: border-box; }}
-        body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
-        header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
-        a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
-        a.nav:hover {{ background:#1e154d }}
-        main {{ padding:24px; max-width:1100px; margin:0 auto }}
-        .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
-        .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
-        label {{ display:block; margin:10px 0 6px }}
-        input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
-        input[type=number] {{ width:120px }}
-        button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
-        button:hover {{ filter:brightness(0.95) }}
-        ul {{ margin:8px 0 0 20px }}
-        code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
-        .muted {{ color:#a4b1d6 }}
-      </style>
-    </head>
-    <body>
-      <header>
-        <div class='brand' style='font-size:22px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
-        <a class='nav' href='/'>Dashboard</a>
-        <a class='nav' href='/keys'>Keys</a>
-        <a class='nav' href='/my'>My Keys</a>
-        <a class='nav' href='/deleted'>Deleted</a>
-        <a class='nav' href='/backup'>Backup</a>
-        <a class='nav' href='/generate-form'>Generate</a>
-      </header>
-      <main>
-        <div class='layout'>
-          <div class='card'>
-            <h2>Generate Keys</h2>
-            <form method='POST' action='/generate'>
-              <label>Daily</label><input type='number' name='daily' min='0' value='0'/>
-              <label>Weekly</label><input type='number' name='weekly' min='0' value='0'/>
-              <label>Monthly</label><input type='number' name='monthly' min='0' value='0'/>
-              <label>Lifetime</label><input type='number' name='lifetime' min='0' value='0'/>
-              <div style='margin-top:12px'>
-                <button type='submit'>Generate</button>
-              </div>
-            </form>
-          </div>
-          <div class='card'>
-            <div>
-              <h3 style='display:inline'>Last Generated</h3>
-              <form method='GET' action='/generate-form' style='display:inline'>
-                <button class='closebtn' title='Close panel'>&times;</button>
-              </form>
-            </div>
-            {block('Daily', lg.get('daily', []))}
-            {block('Weekly', lg.get('weekly', []))}
-            {block('Monthly', lg.get('monthly', []))}
-            {block('Lifetime', lg.get('lifetime', []))}
-          </div>
-        </div>
-      </main>
-    </body></html>
-    """
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(form_html.encode())
-    return
                 if self.path.startswith('/keys'):
                     # Filters
                     parsed = urllib.parse.urlparse(self.path)
