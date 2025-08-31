@@ -963,7 +963,17 @@ class AutoBuyView(discord.ui.View):
             public_url = os.getenv('PUBLIC_URL', '')
             if public_url:
                 ipn_callback_url = f"{public_url.rstrip('/')}{IPN_ENDPOINT}"
-        
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = await _np_client.create_invoice(
+                    session=session,
+                    price_amount=price,
+                    plan=self.selected_plan,
+                    order_id=order_id,
+                    pay_currency=pay_currency,
+                    ipn_callback_url=ipn_callback_url,
+                )
         except Exception as e:
             print(f"Failed to create invoice: {e}")  # <-- Add this line for debugging
             return await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
