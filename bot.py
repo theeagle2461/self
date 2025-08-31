@@ -1717,21 +1717,17 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             authed_mid = str(session.get('machine_id')) if session else None
             authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
 
-            # /generate-form (admin key required)
-            if self.path == '/generate-form':
-                parsed = urllib.parse.urlparse(self.path)
-                q = urllib.parse.parse_qs(parsed.query or '')
-                adminkey = (q.get('adminkey', [''])[0] or '').strip()
-                if not adminkey or adminkey not in admin_keys:
-                    self.send_response(403)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
-                    return
+            # ...rest of your GET logic, all indented 12 spaces from the left...
+        except Exception as e:
+            try:
+                self.send_response(500)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Internal Server Error: {e}".encode())
+            except Exception:
+                pass:
 
             # Build sidebar content for last generated keys
-            lg = key_manager.last_generated or {"daily": [], "weekly": [], "monthly": [], "lifetime": []}
-            def block(name, arr):
                 if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
                 lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
                 more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr) > 50 else ''
@@ -1804,14 +1800,6 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(form_html.encode())
             return
-
-    # Build sidebar content for last generated keys
-    lg = key_manager.last_generated or {"daily": [], "weekly": [], "monthly": [], "lifetime": []}
-    def block(name, arr):
-        if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
-        lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
-        more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr) > 50 else ''
-        return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
 
                 if self.path.startswith('/keys'):
                     # Filters
