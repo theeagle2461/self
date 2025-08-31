@@ -896,10 +896,6 @@ class NowPaymentsClient:
 _np_client = NowPaymentsClient(NOWPAYMENTS_API_BASE, NOWPAYMENTS_API_KEY) if NOWPAYMENTS_API_KEY else None
 
 # ------- UI --------
-once i select the key i want it gives me this _message failed: 400 Bad Request (error code: 40060): Interaction has already been acknowledged.
-
-after i click select a cryptocurrency (after the error message) it says
-This interaction failed
 class AutoBuyView(discord.ui.View):
     def __init__(self, requester_id: int, timeout: Optional[float] = 180):
         super().__init__(timeout=timeout)
