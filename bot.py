@@ -3418,6 +3418,14 @@ async def help_command(interaction: discord.Interaction):
         embed.add_field(name=name, value=desc, inline=False)
     await _message(embed=embed, ephemeral=True)
 
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="autobuy", description="Buy a key via crypto (NOWPayments)")
+async def autobuy(interaction: discord.Interaction):
+    if not _np_client:
+        return await interaction.response.send_message("Payments unavailable right now.", ephemeral=True)
+    view = AutoBuyView(interaction.user.id)
+    await interaction.response.send_message("Select a plan:", view=view, ephemeral=True)
+
 # Run the bot
 if __name__ == "__main__":
     print("🚀 Starting Discord Bot...")
