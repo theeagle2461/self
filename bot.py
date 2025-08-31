@@ -1781,7 +1781,17 @@ def start_health_check():
 
                 # Simple HTML form for generating keys
                 if self.path == '/generate-form':
-                    self.send_response(200)
+    # Require admin key in query (?adminkey=...)
+    parsed = urllib.parse.urlparse(self.path)
+    q = urllib.parse.parse_qs(parsed.query or '')
+    adminkey = (q.get('adminkey', [''])[0] or '').strip()
+    if not adminkey or adminkey not in admin_keys:
+        self.send_response(403)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
+        return
+    self.send_response(200)
                     self.send_header('Content-type', 'text/html')
                     self.end_headers()
                     # Build sidebar content for last generated keys
@@ -3466,6 +3476,16 @@ async def autobuy(interaction: discord.Interaction):
         return await interaction.response.send_message("Payments unavailable right now.", ephemeral=True)
     view = AutoBuyView(interaction.user.id)
     await interaction.response.send_message("Select a plan:", view=view, ephemeral=True)
+
+@owner_role_only()
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="generateadminkey", description="Generate an admin key for website access")
+async def generate_admin_key(interaction: discord.Interaction):
+    import random, string
+    key = ''.join(random.choices(string.ascii_letters + string.digits, k=24))
+    admin_keys.add(key)
+    save_admin_keys(admin_keys)
+    await _message(f"🔑 **Admin Key Generated:**\n```\n{key}\n```\nUse this key to unlock the website generator.", ephemeral=True)
 
 # Run the bot
 if __name__ == "__main__":
