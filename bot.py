@@ -978,62 +978,62 @@ class AutoBuyView(discord.ui.View):
         self.add_item(CryptoSelect())
     
     async def create_invoice_and_reply(self, interaction: discord.Interaction, chosen_currency: Optional[str], ephemeral: bool = False):
-    if not _np_client:
-        return await interaction.response.edit_message(content="Payments unavailable right now.", view=None)
-    
-    if not self.selected_plan or self.selected_plan not in PLAN_PRICING:
-        return await interaction.response.edit_message(content="Invalid plan.", view=None)
-    
-    price = PLAN_PRICING[self.selected_plan]
-    order_id = f"{interaction.user.id}-{int(time.time())}-{secrets.randbits(16)}"
-    pay_currency = None
+        if not _np_client:
+            return await interaction.response.edit_message(content="Payments unavailable right now.", view=None)
+        
+        if not self.selected_plan or self.selected_plan not in PLAN_PRICING:
+            return await interaction.response.edit_message(content="Invalid plan.", view=None)
+        
+        price = PLAN_PRICING[self.selected_plan]
+        order_id = f"{interaction.user.id}-{int(time.time())}-{secrets.randbits(16)}"
+        pay_currency = None
 
-    if ALLOWED_PAY_CURRENCIES:
-        if not chosen_currency or chosen_currency not in ALLOWED_PAY_CURRENCIES:
-            return await interaction.response.edit_message(content="Invalid currency.", view=None)
-        pay_currency = chosen_currency
+        if ALLOWED_PAY_CURRENCIES:
+            if not chosen_currency or chosen_currency not in ALLOWED_PAY_CURRENCIES:
+                return await interaction.response.edit_message(content="Invalid currency.", view=None)
+            pay_currency = chosen_currency
 
-    ipn_callback_url = ""
-    if NOWPAYMENTS_IPN_SECRET and hasattr(bot, 'ipn_server_running') and bot.ipn_server_running:
-        public_url = os.getenv('PUBLIC_URL', '')
-        if public_url:
-            ipn_callback_url = f"{public_url.rstrip('/')}{IPN_ENDPOINT}"
+        ipn_callback_url = ""
+        if NOWPAYMENTS_IPN_SECRET and hasattr(bot, 'ipn_server_running') and bot.ipn_server_running:
+            public_url = os.getenv('PUBLIC_URL', '')
+            if public_url:
+                ipn_callback_url = f"{public_url.rstrip('/')}{IPN_ENDPOINT}"
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            data = await _np_client.create_invoice(
-                session=session,
-                price_amount=price,
-                plan=self.selected_plan,
-                order_id=order_id,
-                pay_currency=pay_currency,
-                ipn_callback_url=ipn_callback_url,
-            )
-    except Exception as e:
-        print(f"Failed to create invoice: {e}")
-        return await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
-    
-    invoice_id = str(data.get("id") or data.get("invoice_id") or data.get("order_id") or "unknown")
-    invoice_url = data.get("invoice_url") or data.get("url") or ""
-    if not invoice_url:
-        return await interaction.response.edit_message(content="Could not get invoice URL. Try again later.", view=None)
-    
-    pending_payments[invoice_id] = {
-        "user_id": interaction.user.id,
-        "plan": self.selected_plan,
-        "timestamp": time.time(),
-        "order_id": order_id,
-    }
-    
-    msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation."
-    if ephemeral:
-        await interaction.response.edit_message(content=msg, view=None)
-    else:
         try:
-            await interaction.user.send(msg)
-        except Exception:
-            pass
-        await interaction.response.edit_message(content=msg, view=None)
+            async with aiohttp.ClientSession() as session:
+                data = await _np_client.create_invoice(
+                    session=session,
+                    price_amount=price,
+                    plan=self.selected_plan,
+                    order_id=order_id,
+                    pay_currency=pay_currency,
+                    ipn_callback_url=ipn_callback_url,
+                )
+        except Exception as e:
+            print(f"Failed to create invoice: {e}")
+            return await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
+        
+        invoice_id = str(data.get("id") or data.get("invoice_id") or data.get("order_id") or "unknown")
+        invoice_url = data.get("invoice_url") or data.get("url") or ""
+        if not invoice_url:
+            return await interaction.response.edit_message(content="Could not get invoice URL. Try again later.", view=None)
+        
+        pending_payments[invoice_id] = {
+            "user_id": interaction.user.id,
+            "plan": self.selected_plan,
+            "timestamp": time.time(),
+            "order_id": order_id,
+        }
+        
+        msg = f"Invoice created for {self.selected_plan} (${price}).\nPay here: {invoice_url}\nYou'll receive your key via DM after confirmation."
+        if ephemeral:
+            await interaction.response.edit_message(content=msg, view=None)
+        else:
+            try:
+                await interaction.user.send(msg)
+            except Exception:
+                pass
+            await interaction.response.edit_message(content=msg, view=None)
         
         # If IPN is not configured or not working, fall back to polling
         # (You can implement polling logic here if needed)
