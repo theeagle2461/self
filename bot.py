@@ -3278,14 +3278,6 @@ async def leaderboard(interaction: discord.Interaction):
     )
     await _message(embed=embed, ephemeral=True)
 
-    ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
-PLAN_PRICING = {
-    "daily": 3,
-    "weekly": 10,
-    "monthly": 15,
-    "lifetime": 30
-}
-
 pending_payments = {}
 
 async def issue_key(plan: str) -> str:
