@@ -962,7 +962,7 @@ class CryptoSelect(discord.ui.Select):
         await interaction.response.edit_message(
             content=warning,
             view=ConfirmCryptoView(view, chosen_currency, min_amount, min_usd, chosen_currency)
-
+        )
 class AutoBuyView(discord.ui.View):
     def __init__(self, requester_id: int, timeout: Optional[float] = 180):
         super().__init__(timeout=timeout)
