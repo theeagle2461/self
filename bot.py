@@ -911,7 +911,6 @@ async def callback(self, interaction: discord.Interaction):
     view.selected_plan = self.values[0]
     if ALLOWED_PAY_CURRENCIES:
         view.switch_to_crypto()
-        # Only respond once here
         await interaction.response.edit_message(
             content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
             view=view
