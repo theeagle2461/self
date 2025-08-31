@@ -1780,7 +1780,7 @@ def start_health_check():
                     return
 
                 # Simple HTML form for generating keys
-                if self.path == '/generate-form':
+if self.path == '/generate-form':
     # Require admin key in query (?adminkey=...)
     parsed = urllib.parse.urlparse(self.path)
     q = urllib.parse.parse_qs(parsed.query or '')
@@ -1792,8 +1792,8 @@ def start_health_check():
         self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
         return
     self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
                     # Build sidebar content for last generated keys
                     lg = key_manager.last_generated or {"daily":[],"weekly":[],"monthly":[],"lifetime":[]}
                     def block(name, arr):
