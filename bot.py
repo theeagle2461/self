@@ -906,16 +906,21 @@ class PlanSelect(discord.ui.Select):
         super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        view: "AutoBuyView" = self.view # type: ignore
-        view.selected_plan = self.values[0]
-        if ALLOWED_PAY_CURRENCIES:
-            view.switch_to_crypto()
-            await interaction.response.edit_message(
-                content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
-                view=view
-            )
-        else:
-            await view.create_invoice_and_reply(interaction, chosen_currency=None)
+        try:
+            view: "AutoBuyView" = self.view # type: ignore
+            view.selected_plan = self.values[0]
+            if ALLOWED_PAY_CURRENCIES:
+                view.switch_to_crypto()
+                await interaction.response.edit_message(
+                    content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
+                    view=view
+                )
+            else:
+                await view.create_invoice_and_reply(interaction, chosen_currency=None)
+        except Exception as e:
+            print(f"PlanSelect.callback error: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
 class CryptoSelect(discord.ui.Select):
     # Minimums for each crypto (update as needed)
