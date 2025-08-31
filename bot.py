@@ -3327,6 +3327,7 @@ class CryptoSelect(discord.ui.Select):
     CRYPTO_MINIMUMS = {
         "BTC": (0.0001, 7.0),
         "ETH": (0.003, 5.5),
+        "ETH(not working atm)": (0.003, 5.5),
         "LTC": (0.05, 3.5),
         "USDC": (3.0, 3.0),
         "USDTERC20": (3.0, 3.0),
@@ -3670,4 +3671,3 @@ async def swap_key(interaction: discord.Interaction, from_user: discord.Member, 
 		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
 		await _message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
 	except Exception as e:
-		pass
