@@ -1717,13 +1717,32 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             authed_mid = str(session.get('machine_id')) if session else None
             authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
 
-            # ...rest of your GET logic, all indented 8 spaces from def...
+            # --- Place all your GET endpoint logic here ---
             # For example:
             # if self.path == '/generate-form':
             #     ... (your handler code) ...
             # if self.path.startswith('/keys'):
             #     ... (your handler code) ...
             # etc.
+            # Make sure all your if self.path ... blocks are indented 8 spaces from the left (4 spaces from try:)
+
+        except Exception as e:
+            try:
+                self.send_response(500)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Internal Server Error: {e}".encode())
+            except Exception:
+                pass
+
+    def do_POST(self):
+        try:
+            # --- Place all your POST endpoint logic here ---
+            # For example:
+            # if self.path == '/generate':
+            #     ... (your handler code) ...
+            # etc.
+            pass
         except Exception as e:
             try:
                 self.send_response(500)
