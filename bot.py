@@ -1717,17 +1717,17 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             authed_mid = str(session.get('machine_id')) if session else None
             authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
 
-        # /generate-form (admin key required)
-        if self.path == '/generate-form':
-            parsed = urllib.parse.urlparse(self.path)
-            q = urllib.parse.parse_qs(parsed.query or '')
-            adminkey = (q.get('adminkey', [''])[0] or '').strip()
-            if not adminkey or adminkey not in admin_keys:
-                self.send_response(403)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-                self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
-                return
+            # /generate-form (admin key required)
+            if self.path == '/generate-form':
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                adminkey = (q.get('adminkey', [''])[0] or '').strip()
+                if not adminkey or adminkey not in admin_keys:
+                    self.send_response(403)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(b"<h2>403 Forbidden</h2><p>Admin key required. Get one from /generateadminkey.</p>")
+                    return
 
             # Build sidebar content for last generated keys
             lg = key_manager.last_generated or {"daily": [], "weekly": [], "monthly": [], "lifetime": []}
