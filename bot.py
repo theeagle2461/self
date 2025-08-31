@@ -916,7 +916,6 @@ async def callback(self, interaction: discord.Interaction):
             view=view
         )
     else:
-        # No currencies specified: let NOWPayments show your enabled methods
         await view.create_invoice_and_reply(interaction, chosen_currency=None)
 
 class ConfirmCryptoView(discord.ui.View):
