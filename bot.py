@@ -895,6 +895,54 @@ class NowPaymentsClient:
 
 _np_client = NowPaymentsClient(NOWPAYMENTS_API_BASE, NOWPAYMENTS_API_KEY) if NOWPAYMENTS_API_KEY else None
 
+class PlanSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="daily - $3", value="daily"),
+            discord.SelectOption(label="weekly - $10", value="weekly"),
+            discord.SelectOption(label="monthly - $15", value="monthly"),
+            discord.SelectOption(label="lifetime - $30", value="lifetime"),
+        ]
+        super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: "AutoBuyView" = self.view # type: ignore
+        view.selected_plan = self.values[0]
+        if ALLOWED_PAY_CURRENCIES:
+            view.switch_to_crypto()
+            await interaction.response.edit_message(
+                content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
+                view=view
+            )
+        else:
+            await view.create_invoice_and_reply(interaction, chosen_currency=None)
+
+class CryptoSelect(discord.ui.Select):
+    # Minimums for each crypto (update as needed)
+    CRYPTO_MINIMUMS = {
+        "BTC": (0.0001, 7.0),
+        "ETH": (0.003, 5.5),
+        "LTC": (0.05, 3.5),
+        "USDC": (3.0, 3.0),
+        "USDTERC20": (3.0, 3.0),
+        "USDTTRC20": (3.0, 3.0),
+    }
+
+    def __init__(self):
+        options = [discord.SelectOption(label=c, value=c) for c in ALLOWED_PAY_CURRENCIES]
+        super().__init__(placeholder="Select a cryptocurrency", min_values=1, max_values=1, options=options)
+    
+    async def callback(self, interaction: discord.Interaction):
+        view: "AutoBuyView" = self.view # type: ignore
+        chosen_currency = self.values[0]
+        min_amount, min_usd = self.CRYPTO_MINIMUMS.get(chosen_currency, (None, None))
+        warning = (
+            f"⛔ **Minimum send for {chosen_currency}: {min_amount} {chosen_currency} (${min_usd} USD)**"
+            if min_amount and min_usd else ""
+        )
+        # Immediately create invoice and show warning under it
+        await view.create_invoice_and_reply(interaction, chosen_currency, ephemeral=True, extra_warning=warning)
+
 # ------- UI --------
 class AutoBuyView(discord.ui.View):
     def __init__(self, requester_id: int, timeout: Optional[float] = 180):
