@@ -907,17 +907,18 @@ class PlanSelect(discord.ui.Select):
         super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
     
     async def callback(self, interaction: discord.Interaction):
-        view: "AutoBuyView" = self.view # type: ignore
-        view.selected_plan = self.values[0]
-        if ALLOWED_PAY_CURRENCIES:
-            view.switch_to_crypto()
-            await interaction.response.edit_message(
-                content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
-                view=view
-            )
-        else:
-            # No currencies specified: let NOWPayments show your enabled methods
-            await view.create_invoice_and_reply(interaction, chosen_currency=None)
+    view: "AutoBuyView" = self.view # type: ignore
+    view.selected_plan = self.values[0]
+    if ALLOWED_PAY_CURRENCIES:
+        view.switch_to_crypto()
+        # Only respond once here
+        await interaction.response.edit_message(
+            content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
+            view=view
+        )
+    else:
+        # No currencies specified: let NOWPayments show your enabled methods
+        await view.create_invoice_and_reply(interaction, chosen_currency=None)
 
 class ConfirmCryptoView(discord.ui.View):
     def __init__(self, parent_view, coin_name, min_amount, min_usd, chosen_currency):
