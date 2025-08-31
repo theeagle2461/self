@@ -941,8 +941,7 @@ async def check_permissions(interaction) -> bool:
         return False
     # Commands that everyone can use
     public_commands = {
-        "help", "activate", "keys", "info", "status", "activekeys", "expiredkeys",
-        "sync", "synccommands", "leaderboard"
+        "help", "activate", "info", "status", "leaderboard"
     }
     cmd_name = None
     try:
@@ -1441,45 +1440,46 @@ async def view_deleted_keys(interaction: discord.Interaction):
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activekeys", description="List all active keys with remaining time and assigned user")
 async def active_keys(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not await check_permissions(interaction):
+        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
+        return
 
-	if not await check_permissions(interaction):
-		return
+    now = int(time.time())
+    active_items = []
+    for key, data in key_manager.keys.items():
+        if data.get("is_active", False):
+            expires = data.get("expiration_time")
+            exp_ts = int(expires or 0)
+            remaining = max(0, exp_ts - now)
+            user_id = data.get("user_id", 0)
+            user_display = "Unassigned" if user_id == 0 else f"<@{user_id}>"
+            active_items.append((key, remaining, user_display))
 
-	now = int(time.time())
-	active_items = []
-	for key, data in key_manager.keys.items():
-		if data.get("is_active", False):
-			expires = data.get("expiration_time")
-			exp_ts = int(expires or 0)
-			remaining = max(0, exp_ts - now)
-			user_id = data.get("user_id", 0)
-			user_display = "Unassigned" if user_id == 0 else f"<@{user_id}>"
-			active_items.append((key, remaining, user_display))
+    if not active_items:
+        await interaction.followup.send("📭 No active keys found.", ephemeral=True)
+        return
 
-	if not active_items:
-		await _message("📭 No active keys found.", ephemeral=True)
-		return
+    # Sort by soonest expiration
+    active_items.sort(key=lambda x: x[1])
 
-	# Sort by soonest expiration
-	active_items.sort(key=lambda x: x[1])
+    def fmt_duration(seconds: int) -> str:
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{days}d {hours}h {minutes}m"
 
-	def fmt_duration(seconds: int) -> str:
-		days = seconds // 86400
-		hours = (seconds % 86400) // 3600
-		minutes = (seconds % 3600) // 60
-		return f"{days}d {hours}h {minutes}m"
+    lines = [f"`{k}` — {fmt_duration(rem)} left — {user}" for k, rem, user in active_items[:20]]
 
-	lines = [f"`{k}` — {fmt_duration(rem)} left — {user}" for k, rem, user in active_items[:20]]
+    embed = discord.Embed(
+        title="🔑 Active Keys",
+        description="\n".join(lines),
+        color=0x00AAFF
+    )
+    if len(active_items) > 20:
+        embed.set_footer(text=f"Showing 20 of {len(active_items)} active keys")
 
-	embed = discord.Embed(
-		title="🔑 Active Keys",
-		description="\n".join(lines),
-		color=0x00AAFF
-	)
-	if len(active_items) > 20:
-		embed.set_footer(text=f"Showing 20 of {len(active_items)} active keys")
-
-	await _message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @owner_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
