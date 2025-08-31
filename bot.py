@@ -1698,18 +1698,27 @@ def start_health_check():
                 bound_ok = True
         return bound_ok if machine_id else has_active
 
-    class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
-        def do_HEAD(self):
-            if self.path == '/':
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-                return
-            self.send_response(404)
+class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
             self.end_headers()
- 
-        def do_GET(self):
-            try:
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_GET(self):
+        try:
+            # ... your /generate-form and other GET logic here ...
+            if self.path == '/generate-form':
+                # (admin key check and HTML form code here)
+                # ... (see previous messages for full block) ...
+                return
+            # ... other GET endpoints ...
+        except Exception as e:
+            # ... error handling ...
+            pass
                 # Session check (kept for potential future use)
                 cookies = _parse_cookies(self.headers.get('Cookie'))
                 session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
@@ -1793,11 +1802,11 @@ if self.path == '/generate-form':
         return
 
     # Build sidebar content for last generated keys
-    lg = key_manager.last_generated or {"daily":[],"weekly":[],"monthly":[],"lifetime":[]}
+    lg = key_manager.last_generated or {"daily": [], "weekly": [], "monthly": [], "lifetime": []}
     def block(name, arr):
         if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
         lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
-        more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr)>50 else ''
+        more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr) > 50 else ''
         return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
 
     form_html = f"""
@@ -1862,9 +1871,11 @@ if self.path == '/generate-form':
       </main>
     </body></html>
     """
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
     self.wfile.write(form_html.encode())
     return
-
                 if self.path.startswith('/keys'):
                     # Filters
                     parsed = urllib.parse.urlparse(self.path)
