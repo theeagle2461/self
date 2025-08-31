@@ -980,10 +980,18 @@ class AutoBuyView(discord.ui.View):
     
     async def create_invoice_and_reply(self, interaction: discord.Interaction, chosen_currency: Optional[str], ephemeral: bool = False):
         if not _np_client:
-            return await interaction.response.edit_message(content="Payments unavailable right now.", view=None)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(content="Payments unavailable right now.", view=None)
+            else:
+                await interaction.followup.send(content="Payments unavailable right now.", view=None, ephemeral=True)
+            return
         
         if not self.selected_plan or self.selected_plan not in PLAN_PRICING:
-            return await interaction.response.edit_message(content="Invalid plan.", view=None)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(content="Invalid plan.", view=None)
+            else:
+                await interaction.followup.send(content="Invalid plan.", view=None, ephemeral=True)
+            return
         
         price = PLAN_PRICING[self.selected_plan]
         order_id = f"{interaction.user.id}-{int(time.time())}-{secrets.randbits(16)}"
@@ -991,7 +999,11 @@ class AutoBuyView(discord.ui.View):
 
         if ALLOWED_PAY_CURRENCIES:
             if not chosen_currency or chosen_currency not in ALLOWED_PAY_CURRENCIES:
-                return await interaction.response.edit_message(content="Invalid currency.", view=None)
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(content="Invalid currency.", view=None)
+                else:
+                    await interaction.followup.send(content="Invalid currency.", view=None, ephemeral=True)
+                return
             pay_currency = chosen_currency
 
         ipn_callback_url = ""
@@ -1012,12 +1024,20 @@ class AutoBuyView(discord.ui.View):
                 )
         except Exception as e:
             print(f"Failed to create invoice: {e}")
-            return await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
+            else:
+                await interaction.followup.send(content="Failed to create invoice. Try again later.", view=None, ephemeral=True)
+            return
         
         invoice_id = str(data.get("id") or data.get("invoice_id") or data.get("order_id") or "unknown")
         invoice_url = data.get("invoice_url") or data.get("url") or ""
         if not invoice_url:
-            return await interaction.response.edit_message(content="Could not get invoice URL. Try again later.", view=None)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(content="Could not get invoice URL. Try again later.", view=None)
+            else:
+                await interaction.followup.send(content="Could not get invoice URL. Try again later.", view=None, ephemeral=True)
+            return
         
         pending_payments[invoice_id] = {
             "user_id": interaction.user.id,
@@ -1037,7 +1057,6 @@ class AutoBuyView(discord.ui.View):
                     pass
                 await interaction.response.edit_message(content=msg, view=None)
         else:
-            # If already acknowledged, use followup
             if ephemeral:
                 await interaction.followup.send(content=msg, view=None, ephemeral=True)
             else:
@@ -1046,6 +1065,9 @@ class AutoBuyView(discord.ui.View):
                 except Exception:
                     pass
                 await interaction.followup.send(content=msg, view=None)
+            # If already acknowledged, use followup
+            if ephemeral:
+                await interaction.followup.send(content=msg, view=None, ephemeral=True)
         
         # If IPN is not configured or not working, fall back to polling
         # (You can implement polling logic here if needed)
