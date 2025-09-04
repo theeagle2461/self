@@ -4,50 +4,46 @@ except Exception:  # pragma: no cover
     try:
         import audioop_lts as audioop  # Fallback for Python 3.13
     except Exception:
-        audioop = None
 
-import discord
-from discord import app_commands
-from discord.ext import commands
-from discord.ext import tasks
-import json
-import uuid
-import time
-import datetime
-import asyncio
-import os
-from typing import Optional, Dict, List
-import aiofiles
-import http.server
-import socketserver
-import threading
-import base64, json as _json, hmac, hashlib
-import secrets
-import hashlib
-import requests
-import urllib.parse
-import html
-import io
-
-# Bot configuration
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-intents.guilds = True
-
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
-
-# Note: discord.py automatically creates bot.tree, no need to manually create it
-
-# Configuration
-GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
-ROLE_ID = 1404221578782183556
-ROLE_NAME = os.getenv('ROLE_NAME', 'activated key')
-OWNER_ROLE_ID = int(os.getenv('OWNER_ROLE_ID', '1402650246538072094') or 0)
 CHATSEND_ROLE_ID = int(os.getenv('CHATSEND_ROLE_ID', '1406339861593591900') or 0)
+            return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
 ADMIN_ROLE_ID = 1402650352083402822  # Role that can manage keys
+            data = {
+                'user_id': int(user_id),
+                'machine_id': str(machine_id or ''),
+                'exp': int(time.time()) + int(ttl_seconds),
+            }
+            raw = _json.dumps(data, separators=(',', ':'))
+            sig = _sign_payload(raw)
+            tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
+            return tok
+
 # Backup to Discord channel and auto-restore settings
+            try:
+                raw = base64.urlsafe_b64decode(token.encode()).decode()
+                if '.' not in raw:
+                    return None
+                payload, sig = raw.rsplit('.', 1)
+                if _sign_payload(payload) != sig:
+                    return None
+                data = _json.loads(payload)
+                if int(data.get('exp', 0)) < int(time.time()):
+                    return None
+                return data
+            except Exception:
+                return None
+
 BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', '1406849195591208960') or 1406849195591208960)
+            cookies = {}
+            if not header:
+                return cookies
+            parts = [p.strip() for p in header.split(';') if p.strip()]
+            for p in parts:
+                if '=' in p:
+                    k, v = p.split('=', 1)
+                    cookies[k.strip()] = v.strip()
+            return cookies
 AUTO_RESTORE_ON_START = (os.getenv('AUTO_RESTORE_ON_START', 'true').lower() in ('1','true','yes'))
 try:
 	BACKUP_INTERVAL_MIN = int(os.getenv('BACKUP_INTERVAL_MIN', '60') or 60)
