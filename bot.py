@@ -4,58 +4,53 @@ try:
 except Exception:  # pragma: no cover
     try:
         import audioop_lts as audioop  # Fallback for Python 3.13
-    except Exception:
-        pass
-CHATSEND_ROLE_ID = int(os.getenv('CHATSEND_ROLE_ID', '1406339861593591900') or 0)
-ADMIN_ROLE_ID = 1402650352083402822  # Role that can manage keys
 
-# Backup to Discord channel and auto-restore settings
-BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', '1406849195591208960') or 1406849195591208960)
-AUTO_RESTORE_ON_START = (os.getenv('AUTO_RESTORE_ON_START', 'true').lower() in ('1','true','yes'))
-try:
-    BACKUP_INTERVAL_MIN = int(os.getenv('BACKUP_INTERVAL_MIN', '60') or 60)
-except Exception:
-    BACKUP_INTERVAL_MIN = 60
-
-# Special admin user IDs for key generation and management
-SPECIAL_ADMIN_IDS = [1216851450844413953, 414921052968452098, 485182079923912734]  # Admin user IDs
-
-def special_admin_only():
-	async def predicate(interaction: discord.Interaction) -> bool:
-		return interaction.user.id in SPECIAL_ADMIN_IDS
-	return app_commands.check(predicate)
-
-# Admin role-only check (role 1402650246538072094)
-def admin_role_only():
-	async def predicate(interaction: discord.Interaction) -> bool:
-		try:
-			member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
-			return bool(member and any(getattr(r, 'id', 0) == 1402650246538072094 for r in getattr(member, 'roles', [])))
-		except Exception:
-			return False
-	return app_commands.check(predicate)
-
-# Webhook configuration for key notifications and selfbot launches
-WEBHOOK_URL = "https://discord.com/api/webhooks/1404537582804668619/6jZeEj09uX7KapHannWnvWHh5a3pSQYoBuV38rzbf_rhdndJoNreeyfFfded8irbccYB"
-CHANNEL_ID = 1404537582804668619  # Channel ID from webhook
-PURCHASE_LOG_WEBHOOK = os.getenv('PURCHASE_LOG_WEBHOOK','')
-# Add backup webhook override for automated snapshots
-BACKUP_WEBHOOK_URL = os.getenv('BACKUP_WEBHOOK_URL', 'https://discord.com/api/webhooks/1409710419173572629/9NaANTEYq6ve1ZpF7SU7gWx89jPO9nADfmPR_4WkIfrOGUZuOa4ECF8dZ2LNgrylKpfd')
-# Removed NOWPayments credentials and related features
-# PUBLIC_URL may still be used by health endpoints elsewhere
-PUBLIC_URL = os.getenv('PUBLIC_URL','')
-
-# Load bot token from environment variable for security
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-
-# Secret for signing panel session cookies
-PANEL_SECRET = os.getenv('PANEL_SECRET', None)
-if not PANEL_SECRET:
     PANEL_SECRET = uuid.uuid4().hex  # ephemeral fallback; set PANEL_SECRET in env for persistent sessions
+        return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
+
+        data = {
+            'user_id': int(user_id),
+            'machine_id': str(machine_id or ''),
+            'exp': int(time.time()) + int(ttl_seconds),
+        }
+        raw = _json.dumps(data, separators=(',', ':'))
+        sig = _sign_payload(raw)
+        tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
+        return tok
 
 # Fallback methods (for local development only)
+        try:
+            raw = base64.urlsafe_b64decode(token.encode()).decode()
+            if '.' not in raw:
+                return None
+            payload, sig = raw.rsplit('.', 1)
+            if _sign_payload(payload) != sig:
+                return None
+            data = _json.loads(payload)
+            if int(data.get('exp', 0)) < int(time.time()):
+                return None
+            return data
+        except Exception:
+            return None
+
 if not BOT_TOKEN:
+        cookies = {}
+        if not header:
+            return cookies
+        parts = [p.strip() for p in header.split(';') if p.strip()]
+        for p in parts:
+            if '=' in p:
+                k, v = p.split('=', 1)
+                cookies[k.strip()] = v.strip()
+        return cookies
+
     # Try to load from .env file
+        now_ts = int(time.time())
+        bound_ok = False
+        has_active = False
+        for key, data in key_manager.keys.items():
+            if int(data.get('user_id', 0) or 0) != int(uid):
     try:
         from dotenv import load_dotenv
         load_dotenv()
