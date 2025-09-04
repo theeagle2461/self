@@ -285,9 +285,9 @@ class KeyManager:
         import string
         key_length = random.randint(10, 12)
         key = ''.join(random.choices(string.ascii_letters + string.digits, k=key_length))
-        
+
         created_time = int(time.time())
-        
+
         self.keys[key] = {
             "user_id": 0,  # 0 means unassigned - anyone can use it
             "channel_id": channel_id,
@@ -301,14 +301,14 @@ class KeyManager:
             "created_by": user_id,
             "key_type": "general"
         }
-        
+
         self.key_usage[key] = {
             "created": created_time,
             "activated": None,
             "last_used": None,
             "usage_count": 0
         }
-        
+
         self.save_data()
         try:
             self.add_log('generate', key, user_id=user_id, details={'duration_days': duration_days, 'channel_id': channel_id})
