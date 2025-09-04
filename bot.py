@@ -4,20 +4,8 @@ try:
 except Exception:  # pragma: no cover
     try:
         import audioop_lts as audioop  # Fallback for Python 3.13
-
-    PANEL_SECRET = uuid.uuid4().hex  # ephemeral fallback; set PANEL_SECRET in env for persistent sessions
-        return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
-
-        data = {
-            'user_id': int(user_id),
-            'machine_id': str(machine_id or ''),
-            'exp': int(time.time()) + int(ttl_seconds),
-        }
-        raw = _json.dumps(data, separators=(',', ':'))
-        sig = _sign_payload(raw)
-        tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
-        return tok
+    except Exception:
+        pass
 
 # Fallback methods (for local development only)
         try:
