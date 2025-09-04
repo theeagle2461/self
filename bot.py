@@ -430,6 +430,7 @@ class KeyManager:
                 user_keys.append({"key": key, **key_info})
         return user_keys
     
+def _sign_payload(payload: str) -> str:
     def backup_keys(self) -> str:
         """Create a backup of all keys"""
         backup_data = {
@@ -437,57 +438,9 @@ class KeyManager:
             "keys": self.keys,
             "usage": self.key_usage
         }
-        
         with open(BACKUP_FILE, 'w') as f:
             json.dump(backup_data, f, indent=2)
-        
         return BACKUP_FILE
-    
-def _sign_payload(payload: str) -> str:
-    return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
-            
-    data = {
-        'user_id': int(user_id),
-        'machine_id': str(machine_id or ''),
-        'exp': int(time.time()) + int(ttl_seconds),
-    }
-    raw = _json.dumps(data, separators=(',', ':'))
-    sig = _sign_payload(raw)
-    tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
-    return tok
-
-            self.keys[key] = {
-    try:
-        raw = base64.urlsafe_b64decode(token.encode()).decode()
-        if '.' not in raw:
-            return None
-        payload, sig = raw.rsplit('.', 1)
-        if _sign_payload(payload) != sig:
-            return None
-        data = _json.loads(payload)
-        if int(data.get('exp', 0)) < int(time.time()):
-            return None
-        return data
-    except Exception:
-        return None
-
-                "user_id": 0,
-    cookies = {}
-    if not header:
-        return cookies
-    parts = [p.strip() for p in header.split(';') if p.strip()]
-    for p in parts:
-        if '=' in p:
-            k, v = p.split('=', 1)
-            cookies[k.strip()] = v.strip()
-    return cookies
-
-                "channel_id": None,
-    now_ts = int(time.time())
-    bound_ok = False
-    has_active = False
-    for key, data in key_manager.keys.items():
         if int(data.get('user_id', 0) or 0) != int(uid):
             continue
         exp = data.get('expiration_time') or 0
