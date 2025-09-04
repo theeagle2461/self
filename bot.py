@@ -451,24 +451,6 @@ def _sign_payload(payload: str) -> str:
         has_active = True
         if machine_id and data.get('machine_id') and str(data.get('machine_id')) == str(machine_id):
             bound_ok = True
-    return bound_ok if machine_id else has_active
-                "created_time": created_time,
-                "activation_time": None,
-                "expiration_time": None,
-                "duration_days": 1,
-                "key_type": "daily",
-                "is_active": True,
-                "machine_id": None,
-                "activated_by": None,
-                "created_by": 0
-            }
-            
-            self.key_usage[key] = {
-                "created": created_time,
-                "activated": None,
-                "last_used": None,
-                "usage_count": 0
-            }
             
             generated_keys["daily"].append(key)
         
