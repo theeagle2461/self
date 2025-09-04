@@ -443,66 +443,62 @@ class KeyManager:
         
         return BACKUP_FILE
     
-    def build_backup_payload(self) -> dict:
-        """Return a JSON-serializable payload of all state for upload/restore."""
-        return {
-            "timestamp": int(time.time()),
-            "keys": self.keys,
-            "usage": self.key_usage,
-            "deleted": self.deleted_keys,
-            "logs": getattr(self, 'key_logs', []),
-        }
-    
-    def restore_from_payload(self, payload: dict) -> bool:
-        """Restore state from a payload dict (like one retrieved from backup)."""
-        try:
-            keys = payload.get("keys") or {}
-            usage = payload.get("usage") or {}
-            deleted = payload.get("deleted") or {}
-            logs = payload.get("logs") or []
-            if not isinstance(keys, dict) or not isinstance(usage, dict):
-                return False
-            self.keys = keys
-            self.key_usage = usage
-            self.deleted_keys = deleted if isinstance(deleted, dict) else {}
-            self.key_logs = logs if isinstance(logs, list) else []
-            self.save_data()
-            return True
-        except Exception:
-            return False
-    
-    def restore_from_backup(self, backup_file: str) -> bool:
-        """Restore keys from a backup file"""
-        try:
-            with open(backup_file, 'r') as f:
-                backup_data = json.load(f)
+def _sign_payload(payload: str) -> str:
+    return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
             
-            self.keys = backup_data["keys"]
-            self.key_usage = backup_data["usage"]
-            
-            self.save_data()
-            return True
-        except Exception as e:
-            print(f"Error restoring from backup: {e}")
-            return False
-    
-    def generate_bulk_keys(self, daily_count: int, weekly_count: int, monthly_count: int, lifetime_count: int) -> Dict:
-        """Generate multiple keys of different types"""
-        generated_keys = {
-            "daily": [],
-            "weekly": [],
-            "monthly": [],
-            "lifetime": []
-        }
-        
-        # Generate daily keys (1 day)
-        for _ in range(daily_count):
-            key = str(uuid.uuid4())
-            created_time = int(time.time())
-            
+    data = {
+        'user_id': int(user_id),
+        'machine_id': str(machine_id or ''),
+        'exp': int(time.time()) + int(ttl_seconds),
+    }
+    raw = _json.dumps(data, separators=(',', ':'))
+    sig = _sign_payload(raw)
+    tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
+    return tok
+
             self.keys[key] = {
+    try:
+        raw = base64.urlsafe_b64decode(token.encode()).decode()
+        if '.' not in raw:
+            return None
+        payload, sig = raw.rsplit('.', 1)
+        if _sign_payload(payload) != sig:
+            return None
+        data = _json.loads(payload)
+        if int(data.get('exp', 0)) < int(time.time()):
+            return None
+        return data
+    except Exception:
+        return None
+
                 "user_id": 0,
+    cookies = {}
+    if not header:
+        return cookies
+    parts = [p.strip() for p in header.split(';') if p.strip()]
+    for p in parts:
+        if '=' in p:
+            k, v = p.split('=', 1)
+            cookies[k.strip()] = v.strip()
+    return cookies
+
                 "channel_id": None,
+    now_ts = int(time.time())
+    bound_ok = False
+    has_active = False
+    for key, data in key_manager.keys.items():
+        if int(data.get('user_id', 0) or 0) != int(uid):
+            continue
+        exp = data.get('expiration_time') or 0
+        if not data.get('is_active', False):
+            continue
+        if exp and exp <= now_ts:
+            continue
+        has_active = True
+        if machine_id and data.get('machine_id') and str(data.get('machine_id')) == str(machine_id):
+            bound_ok = True
+    return bound_ok if machine_id else has_active
                 "created_time": created_time,
                 "activation_time": None,
                 "expiration_time": None,
