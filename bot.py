@@ -21,11 +21,12 @@ import aiofiles
 import http.server
 import socketserver
 import threading
+import secrets
+import hashlib
 import requests
 import urllib.parse
 import html
 import io
-import aiohttp
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -36,37 +37,6 @@ intents.guilds = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # Note: discord.py automatically creates bot.tree, no need to manually create it
-
-NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY", "YOUR_NOWPAYMENTS_API_KEY")
-NOWPAYMENTS_API_BASE = "https://api.nowpayments.io"
-
-class NowPaymentsClient:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-
-    async def create_invoice(self, session, price_amount, plan, order_id, pay_currency):
-        url = f"{NOWPAYMENTS_API_BASE}/v1/invoice"
-        headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
-        payload = {
-            "price_amount": price_amount,
-            "price_currency": "usd",
-            "pay_currency": pay_currency,
-            "order_id": order_id,
-            "order_description": f"{plan} key"
-        }
-        async with session.post(url, headers=headers, json=payload) as resp:
-            data = await resp.json()
-            return data
-
-_np_client = NowPaymentsClient(NOWPAYMENTS_API_KEY)
-
-ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
-PLAN_PRICING = {
-    "daily": 3,
-    "weekly": 10,
-    "monthly": 15,
-    "lifetime": 30
-}
 
 # Configuration
 GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
@@ -83,49 +53,36 @@ try:
 except Exception:
 	BACKUP_INTERVAL_MIN = 60
 
+# Special admin user IDs for key generation and management
+SPECIAL_ADMIN_IDS = [1216851450844413953, 414921052968452098, 485182079923912734]  # Admin user IDs
+
+def special_admin_only():
+	async def predicate(interaction: discord.Interaction) -> bool:
+		return interaction.user.id in SPECIAL_ADMIN_IDS
+	return app_commands.check(predicate)
+
 # Admin role-only check (role 1402650246538072094)
-def owner_role_only():
-    async def predicate(interaction: discord.Interaction) -> bool:
-        try:
-            member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
-            return bool(member and any(getattr(r, 'id', 0) == OWNER_ROLE_ID for r in getattr(member, 'roles', [])))
-        except Exception:
-            return False
-    return app_commands.check(predicate)
+def admin_role_only():
+	async def predicate(interaction: discord.Interaction) -> bool:
+		try:
+			member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
+			return bool(member and any(getattr(r, 'id', 0) == 1402650246538072094 for r in getattr(member, 'roles', [])))
+		except Exception:
+			return False
+	return app_commands.check(predicate)
 
 # Webhook configuration for key notifications and selfbot launches
 WEBHOOK_URL = "https://discord.com/api/webhooks/1404537582804668619/6jZeEj09uX7KapHannWnvWHh5a3pSQYoBuV38rzbf_rhdndJoNreeyfFfded8irbccYB"
 CHANNEL_ID = 1404537582804668619  # Channel ID from webhook
+PURCHASE_LOG_WEBHOOK = os.getenv('PURCHASE_LOG_WEBHOOK','')
 # Add backup webhook override for automated snapshots
 BACKUP_WEBHOOK_URL = os.getenv('BACKUP_WEBHOOK_URL', 'https://discord.com/api/webhooks/1409710419173572629/9NaANTEYq6ve1ZpF7SU7gWx89jPO9nADfmPR_4WkIfrOGUZuOa4ECF8dZ2LNgrylKpfd')
-# Chat mirror webhook (currently unused)
-CHAT_MIRROR_WEBHOOK = os.getenv('CHAT_MIRROR_WEBHOOK', '')
+# Removed NOWPayments credentials and related features
 # PUBLIC_URL may still be used by health endpoints elsewhere
 PUBLIC_URL = os.getenv('PUBLIC_URL','')
 
 # Load bot token from environment variable for security
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-
-async def _message(content=None, embed=None, ephemeral=True, interaction=None):
-    """Helper to send a message in a slash command context."""
-    import inspect
-    if interaction is None:
-        frame = inspect.currentframe()
-        while frame:
-            local_inter = frame.f_locals.get('interaction')
-            if local_inter:
-                interaction = local_inter
-                break
-            frame = frame.f_back
-    if interaction is None:
-        raise RuntimeError("No interaction found for _message()")
-    try:
-        if not interaction.response.is_done():
-            await interaction.response.send_message(content=content, embed=embed, ephemeral=ephemeral)
-        else:
-            await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral)
-    except Exception as e:
-        print(f"_message failed: {e}")
 
 # Secret for signing panel session cookies
 PANEL_SECRET = os.getenv('PANEL_SECRET', None)
@@ -141,7 +98,7 @@ if not BOT_TOKEN:
         BOT_TOKEN = os.getenv('BOT_TOKEN')
     except ImportError:
         pass
-
+    
     # If still no token, try alternative methods
     if not BOT_TOKEN:
         # Method 1: Check for a config file
@@ -152,7 +109,7 @@ if not BOT_TOKEN:
                     BOT_TOKEN = config.get('BOT_TOKEN')
             except:
                 pass
-
+        
         # Method 2: Check for a hidden file
         if not BOT_TOKEN and os.path.exists('.bot_config'):
             try:
@@ -160,7 +117,7 @@ if not BOT_TOKEN:
                     BOT_TOKEN = f.read().strip()
             except:
                 pass
-
+        
         # Method 3: Check for encoded token
         if not BOT_TOKEN and os.path.exists('.encoded_token'):
             try:
@@ -266,11 +223,11 @@ class KeyManager:
             if os.path.exists(KEYS_FILE):
                 with open(KEYS_FILE, 'r') as f:
                     self.keys = json.load(f)
-
+            
             if os.path.exists(USAGE_FILE):
                 with open(USAGE_FILE, 'r') as f:
                     self.key_usage = json.load(f)
-
+                    
             if os.path.exists(DELETED_KEYS_FILE):
                 with open(DELETED_KEYS_FILE, 'r') as f:
                     self.deleted_keys = json.load(f)
@@ -283,7 +240,7 @@ class KeyManager:
             self.key_usage = {}
             self.deleted_keys = {}
             self.key_logs = []
-
+    
     def save_data(self):
         """Save keys and usage data to files (atomically) and also write a timestamped backup"""
         try:
@@ -319,7 +276,7 @@ class KeyManager:
                 asyncio.run_coroutine_threadsafe(upload_backup_snapshot(payload), loop)
         except Exception:
             pass
-
+    
     def generate_key(self, user_id: int, channel_id: Optional[int] = None, duration_days: int = 30) -> str:
         """Generate a new key for general use"""
         # Generate 10-12 random alphanumeric characters
@@ -327,9 +284,9 @@ class KeyManager:
         import string
         key_length = random.randint(10, 12)
         key = ''.join(random.choices(string.ascii_letters + string.digits, k=key_length))
-
+        
         created_time = int(time.time())
-
+        
         self.keys[key] = {
             "user_id": 0,  # 0 means unassigned - anyone can use it
             "channel_id": channel_id,
@@ -343,21 +300,21 @@ class KeyManager:
             "created_by": user_id,
             "key_type": "general"
         }
-
+        
         self.key_usage[key] = {
             "created": created_time,
             "activated": None,
             "last_used": None,
             "usage_count": 0
         }
-
+        
         self.save_data()
         try:
             self.add_log('generate', key, user_id=user_id, details={'duration_days': duration_days, 'channel_id': channel_id})
         except Exception:
             pass
         return key
-
+    
     def revoke_key(self, key: str) -> bool:
         """Revoke a key"""
         if key in self.keys:
@@ -369,7 +326,7 @@ class KeyManager:
                 pass
             return True
         return False
-
+    
     def delete_key(self, key: str) -> bool:
         """Completely delete a key and move it to deleted database"""
         if key in self.keys:
@@ -377,17 +334,17 @@ class KeyManager:
             key_data = self.keys[key].copy()
             key_data["deleted_at"] = int(time.time())
             key_data["deleted_by"] = "admin"  # You can modify this to track who deleted it
-
+            
             # Move to deleted keys database
             self.deleted_keys[key] = key_data
-
+            
             # Remove from active keys
             del self.keys[key]
-
+            
             # Remove from usage if exists
             if key in self.key_usage:
                 del self.key_usage[key]
-
+            
             self.save_data()
             try:
                 self.add_log('delete', key)
@@ -395,33 +352,33 @@ class KeyManager:
                 pass
             return True
         return False
-
+    
     def is_key_deleted(self, key: str) -> bool:
         """Check if a key has been deleted"""
         return key in self.deleted_keys
-
+    
     def activate_key(self, key: str, machine_id: str, user_id: int) -> Dict:
         """Activate a key for a specific machine"""
         key = normalize_key(key)
         # Check if key is deleted first
         if self.is_key_deleted(key):
             return {"success": False, "error": "No access, deleted key"}
-
+        
         if key not in self.keys:
             return {"success": False, "error": "Invalid key"}
-
+        
         key_data = self.keys[key]
-
+        
         if not key_data["is_active"]:
             return {"success": False, "error": "Access revoked"}
-
+        
         if key_data["machine_id"] and key_data["machine_id"] != machine_id:
             return {"success": False, "error": "Key is already activated on another machine"}
-
+        
         # If already has expiration_time and it's expired, block
         if key_data.get("expiration_time") and key_data["expiration_time"] < int(time.time()):
             return {"success": False, "error": "Key has expired"}
-
+        
         # Activate the key (first-time activation sets activation/expiration)
         now_ts = int(time.time())
         key_data["machine_id"] = machine_id
@@ -432,13 +389,13 @@ class KeyManager:
         if not key_data.get("expiration_time"):
             duration_days = int(key_data.get("duration_days", 30))
             key_data["expiration_time"] = now_ts + (duration_days * 24 * 60 * 60)
-
+        
         # Update usage
         if key in self.key_usage:
             self.key_usage[key]["activated"] = now_ts
             self.key_usage[key]["last_used"] = now_ts
             self.key_usage[key]["usage_count"] += 1
-
+        
         self.save_data()
         # Log activation
         try:
@@ -451,7 +408,7 @@ class KeyManager:
             "expiration_time": key_data["expiration_time"],
             "channel_id": key_data["channel_id"]
         }
-
+    
     def get_key_info(self, key: str) -> Optional[Dict]:
         """Get information about a key"""
         if key in self.keys:
@@ -460,7 +417,7 @@ class KeyManager:
                 key_data.update(self.key_usage[key])
             return key_data
         return None
-
+    
     def get_user_keys(self, user_id: int) -> List[Dict]:
         """Get all keys for a specific user"""
         user_keys = []
@@ -471,7 +428,7 @@ class KeyManager:
                     key_info.update(self.key_usage[key])
                 user_keys.append({"key": key, **key_info})
         return user_keys
-
+    
     def backup_keys(self) -> str:
         """Create a backup of all keys"""
         backup_data = {
@@ -479,12 +436,12 @@ class KeyManager:
             "keys": self.keys,
             "usage": self.key_usage
         }
-
+        
         with open(BACKUP_FILE, 'w') as f:
             json.dump(backup_data, f, indent=2)
-
+        
         return BACKUP_FILE
-
+    
     def build_backup_payload(self) -> dict:
         """Return a JSON-serializable payload of all state for upload/restore."""
         return {
@@ -494,7 +451,7 @@ class KeyManager:
             "deleted": self.deleted_keys,
             "logs": getattr(self, 'key_logs', []),
         }
-
+    
     def restore_from_payload(self, payload: dict) -> bool:
         """Restore state from a payload dict (like one retrieved from backup)."""
         try:
@@ -512,22 +469,22 @@ class KeyManager:
             return True
         except Exception:
             return False
-
+    
     def restore_from_backup(self, backup_file: str) -> bool:
         """Restore keys from a backup file"""
         try:
             with open(backup_file, 'r') as f:
                 backup_data = json.load(f)
-
+            
             self.keys = backup_data["keys"]
             self.key_usage = backup_data["usage"]
-
+            
             self.save_data()
             return True
         except Exception as e:
             print(f"Error restoring from backup: {e}")
             return False
-
+    
     def generate_bulk_keys(self, daily_count: int, weekly_count: int, monthly_count: int, lifetime_count: int) -> Dict:
         """Generate multiple keys of different types"""
         generated_keys = {
@@ -536,12 +493,12 @@ class KeyManager:
             "monthly": [],
             "lifetime": []
         }
-
+        
         # Generate daily keys (1 day)
         for _ in range(daily_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-
+            
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -555,21 +512,21 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-
+            
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-
+            
             generated_keys["daily"].append(key)
-
+        
         # Generate weekly keys (7 days)
         for _ in range(weekly_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-
+            
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -583,21 +540,21 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-
+            
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-
+            
             generated_keys["weekly"].append(key)
-
+        
         # Generate monthly keys (30 days)
         for _ in range(monthly_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-
+            
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -611,21 +568,21 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-
+            
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-
+            
             generated_keys["monthly"].append(key)
-
+        
         # Generate lifetime keys (365 days)
         for _ in range(lifetime_count):
             key = str(uuid.uuid4())
             created_time = int(time.time())
-
+            
             self.keys[key] = {
                 "user_id": 0,
                 "channel_id": None,
@@ -639,19 +596,19 @@ class KeyManager:
                 "activated_by": None,
                 "created_by": 0
             }
-
+            
             self.key_usage[key] = {
                 "created": created_time,
                 "activated": None,
                 "last_used": None,
                 "usage_count": 0
             }
-
+            
             generated_keys["lifetime"].append(key)
-
+        
         self.save_data()
         return generated_keys
-
+    
     def get_available_keys_by_type(self) -> Dict:
         """Get all available (unassigned) keys grouped by type"""
         available_keys = {
@@ -660,7 +617,7 @@ class KeyManager:
             "monthly": [],
             "lifetime": []
         }
-
+        
         for key, data in self.keys.items():
             if data["is_active"] and data["user_id"] == 0:  # Unassigned and active
                 key_type = data.get("key_type", "unknown")
@@ -671,15 +628,15 @@ class KeyManager:
                 }
                 if key_type in available_keys:
                     available_keys[key_type].append(available_entry)
-
+        
         return available_keys
-
+    
     async def send_webhook_notification(self, key: str, user_id: int, machine_id: str, ip: Optional[str] = None):
         """Send webhook notification when a key is activated"""
         try:
             if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE":
                 return
-
+            
             embed = {
                 "title": "🔑 Key Activated",
                 "color": 0x00ff00,
@@ -712,24 +669,24 @@ class KeyManager:
                 ],
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
-
+            
             payload = {
                 "embeds": [embed]
             }
-
+            
             response = requests.post(WEBHOOK_URL, json=payload)
             if response.status_code != 204:
                 print(f"Failed to send webhook notification: {response.status_code}")
-
+                
         except Exception as e:
             print(f"Error sending webhook notification: {e}")
-
+    
     async def send_generated_key_to_webhook(self, key: str, duration_days: int, created_by: str):
         """Send newly generated key to webhook"""
         try:
             if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE":
                 return
-
+            
             embed = {
                 "title": "🔑 New Key Generated",
                 "color": 0x00ff00,
@@ -762,18 +719,18 @@ class KeyManager:
                 ],
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
-
+            
             payload = {
                 "embeds": [embed]
             }
-
+            
             response = requests.post(WEBHOOK_URL, json=payload)
             if response.status_code != 204:
                 print(f"Failed to send generated key to webhook: {response.status_code}")
-
+                
         except Exception as e:
             print(f"Error sending generated key to webhook: {e}")
-
+    
     def get_key_duration_for_selfbot(self, key: str) -> Optional[Dict]:
         """Get key duration info for SelfBot integration"""
         if key in self.keys:
@@ -781,12 +738,12 @@ class KeyManager:
             if key_data["is_active"]:
                 current_time = int(time.time())
                 time_remaining = key_data["expiration_time"] - current_time
-
+                
                 if time_remaining > 0:
                     days = time_remaining // 86400
                     hours = (time_remaining % 86400) // 3600
                     minutes = (time_remaining % 3600) // 60
-
+                    
                     return {
                         "success": True,
                         "duration_days": key_data.get("duration_days", 30),
@@ -863,13 +820,13 @@ async def on_ready():
     print(f'✅ {bot.user} has connected to Discord!')
     print(f'🆔 Bot ID: {bot.user.id}')
     print(f'🌐 Connected to {len(bot.guilds)} guild(s)')
-
+    
     # Set bot status
-    await bot.change_presence(activity=discord.Game(name="I Hate Ngas | \\help"))
-
+    await bot.change_presence(activity=discord.Game(name="Managing Keys | /help"))
+    
     # Start time for uptime
     bot.start_time = datetime.datetime.utcnow()
-
+    
     print("🤖 Bot is now ready and online!")
     try:
         if not reconcile_roles_task.is_running():
@@ -930,30 +887,53 @@ async def on_ready():
         except Exception:
             pass
 
+@bot.event
+async def on_disconnect():
+    try:
+        await send_status_webhook('offline')
+    except Exception:
+        pass
+
 async def check_permissions(interaction) -> bool:
     """Check if user has permission to use bot commands"""
     if not interaction.guild:
+        await interaction.response.send_message("❌ This bot can only be used in a server.", ephemeral=True)
         return False
+    
     if interaction.guild.id != GUILD_ID:
+        await interaction.response.send_message("❌ This bot is not configured for this server.", ephemeral=True)
         return False
+    
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
+        await interaction.response.send_message("❌ Unable to verify your permissions.", ephemeral=True)
         return False
+
+    # Special admins always allowed
+    if interaction.user.id in SPECIAL_ADMIN_IDS:
+        return True
+
     # Commands that everyone can use
     public_commands = {
-        "help", "activate", "info", "status", "leaderboard"
+        "help", "activate", "keys", "info", "status", "activekeys", "expiredkeys",
+        "sync", "synccommands"
     }
     cmd_name = None
     try:
         cmd_name = getattr(interaction.command, "name", None)
     except Exception:
         cmd_name = None
+
     if cmd_name in public_commands:
         return True
+
     # For all other commands, require admin role
     has_admin_role = ADMIN_ROLE_ID in [role.id for role in member.roles]
-    has_owner_role = OWNER_ROLE_ID in [role.id for role in member.roles]
-    return has_admin_role or has_owner_role
+    if not has_admin_role:
+        await interaction.response.send_message("❌ You don't have permission to use this bot.", ephemeral=True)
+        return False
+    
+    return True
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activate", description="Activate a key and get the user role")
@@ -963,10 +943,10 @@ async def activate_key(interaction: discord.Interaction, key: str):
         # Get machine ID (using user's ID as a simple identifier)
         machine_id = str(interaction.user.id)
         user_id = interaction.user.id
-
+        
         # Attempt to activate the key
         result = key_manager.activate_key(key, machine_id, user_id)
-
+        
         if result["success"]:
             # Give the user the role
             role = interaction.guild.get_role(ROLE_ID)
@@ -975,11 +955,11 @@ async def activate_key(interaction: discord.Interaction, key: str):
                 role_message = f"✅ Role **{role.name}** has been assigned to you!"
             else:
                 role_message = f"✅ You already have the **{role.name}** role!"
-
+            
             # Get key duration info
             key_data = key_manager.get_key_info(key)
             duration_days = key_data.get("duration_days", 30) if key_data else 30
-
+            
             # Force immediate backup upload
             try:
                 print(f"🔄 Triggering backup after key activation for user {interaction.user.id}")
@@ -987,7 +967,7 @@ async def activate_key(interaction: discord.Interaction, key: str):
                 await upload_backup_snapshot(payload)
             except Exception as e:
                 print(f"❌ Backup failed in activate command: {e}")
-
+            
             # Webhook notify
             try:
                 try:
@@ -997,7 +977,7 @@ async def activate_key(interaction: discord.Interaction, key: str):
                 await key_manager.send_webhook_notification(key, user_id, machine_id, ip=user_ip)
             except Exception:
                 pass
-
+            
             # Create embed
             embed = discord.Embed(
                 title="✅ Key Activated",
@@ -1007,18 +987,18 @@ async def activate_key(interaction: discord.Interaction, key: str):
             embed.add_field(name="Role Assigned", value=role_message, inline=False)
             embed.add_field(name="Duration", value=f"{duration_days} days", inline=True)
             embed.add_field(name="Expires", value=f"<t:{result['expiration_time']}:R>", inline=True)
-
+            
             if result.get('channel_id'):
                 embed.add_field(name="Channel Locked", value=f"<#{result['channel_id']}>", inline=True)
-
+            
             embed.set_thumbnail(url=interaction.user.display_avatar.url if interaction.user.display_avatar else None)
             embed.set_footer(text=f"Activated by {interaction.user.display_name}")
-
-            await _message(embed=embed)
+            
+            await interaction.response.send_message(embed=embed)
         else:
-            await _message(f"❌ **Activation Failed:** {result['error']}", ephemeral=True)
+            await interaction.response.send_message(f"❌ **Activation Failed:** {result['error']}", ephemeral=True)
     except Exception as e:
-        await _message(f"❌ An error occurred: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(f"❌ An error occurred: {str(e)}", ephemeral=True)
 
 # Removed duplicate sync command name to avoid conflicts
 @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -1028,30 +1008,30 @@ async def sync_key(interaction: discord.Interaction, key: str):
     try:
         key_data = key_manager.get_key_info(key)
         if not key_data:
-            await _message("❌ Key not found.", ephemeral=True)
+            await interaction.response.send_message("❌ Key not found.", ephemeral=True)
             return
-
+        
         if not key_data["is_active"]:
-            await _message("❌ Key has been revoked.", ephemeral=True)
+            await interaction.response.send_message("❌ Key has been revoked.", ephemeral=True)
             return
-
+        
         # Check if user owns this key
         if key_data["user_id"] != interaction.user.id:
-            await _message("❌ This key doesn't belong to you.", ephemeral=True)
+            await interaction.response.send_message("❌ This key doesn't belong to you.", ephemeral=True)
             return
-
+        
         duration_days = key_data.get("duration_days", 30)
         expiration_time = key_data["expiration_time"]
         time_remaining = expiration_time - int(time.time())
-
+        
         if time_remaining <= 0:
-            await _message("❌ This key has expired.", ephemeral=True)
+            await interaction.response.send_message("❌ This key has expired.", ephemeral=True)
             return
-
+        
         days = time_remaining // 86400
         hours = (time_remaining % 86400) // 3600
         minutes = (time_remaining % 3600) // 60
-
+        
         embed = discord.Embed(
             title="🔄 Key Sync Information",
             description="Use this information in your SelfBot",
@@ -1061,21 +1041,24 @@ async def sync_key(interaction: discord.Interaction, key: str):
         embed.add_field(name="Duration", value=f"{duration_days} days", inline=True)
         embed.add_field(name="Time Remaining", value=f"{days}d {hours}h {minutes}m", inline=True)
         embed.add_field(name="Expires", value=f"<t:{expiration_time}:F>", inline=False)
-
-        await _message(embed=embed, ephemeral=True)
-
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
     except Exception as e:
-        await _message(f"❌ Error syncing key: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Error syncing key: {str(e)}", ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="revoke", description="Revoke a specific key")
 async def revoke_key(interaction: discord.Interaction, key: str):
 	"""Revoke a specific key"""
-
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
 	if not await check_permissions(interaction):
 		return
-
+	
 	if key_manager.revoke_key(key):
 		# Force immediate backup upload after revoke
 		try:
@@ -1089,11 +1072,11 @@ async def revoke_key(interaction: discord.Interaction, key: str):
 			description=f"Key `{key}` has been successfully revoked.",
 			color=0xff0000
 		)
-		await _message(embed=embed)
+		await interaction.response.send_message(embed=embed)
 	else:
-		await _message("❌ Key not found or already revoked.", ephemeral=True)
+		await interaction.response.send_message("❌ Key not found or already revoked.", ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="unrevoke", description="Unrevoke (re-enable) a revoked key")
 async def unrevoke_key(interaction: discord.Interaction, key: str):
@@ -1124,167 +1107,183 @@ async def unrevoke_key(interaction: discord.Interaction, key: str):
 	except Exception as e:
 		await interaction.followup.send(f"❌ Failed: {e}", ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="keys", description="Show all keys for a user (admin only)")
+@bot.tree.command(name="keys", description="Show all keys for a user")
 async def show_keys(interaction: discord.Interaction, user: Optional[discord.Member] = None):
-    """Show all keys for a user (or yourself if no user specified)"""
-    if not await check_permissions(interaction):
-        return
+	"""Show all keys for a user (or yourself if no user specified)"""
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
+	if not await check_permissions(interaction):
+		return
+	
+	target_user = user or interaction.user
+	user_keys = key_manager.get_user_keys(target_user.id)
+	
+	if not user_keys:
+		await interaction.response.send_message(f"📭 No keys found for {target_user.mention}.", ephemeral=True)
+		return
+	
+	embed = discord.Embed(
+		title=f"🔑 Keys for {target_user.display_name}",
+		color=0x2d6cdf
+	)
+	
+	for i, (key, data) in enumerate(user_keys.items(), start=1):
+		status = "Active" if data.get("is_active", False) else "Revoked"
+		expires = data.get("expiration_time")
+		expires_str = f"<t:{expires}:R>" if expires else "N/A"
+		embed.add_field(name=f"Key {i}", value=f"`{key}`\nStatus: **{status}**\nExpires: {expires_str}", inline=False)
+	
+	await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    target_user = user or interaction.user
-    user_keys = key_manager.get_user_keys(target_user.id)
-
-    if not user_keys:
-        await _message(f"📭 No keys found for {target_user.mention}.", ephemeral=True)
-        return
-
-    embed = discord.Embed(
-        title=f"🔑 Keys for {target_user.display_name}",
-        color=0x2d6cdf
-    )
-
-    for i, key_info in enumerate(user_keys, start=1):
-        key = key_info["key"]
-        status = "Active" if key_info.get("is_active", False) else "Revoked"
-        expires = key_info.get("expiration_time")
-        expires_str = f"<t:{expires}:R>" if expires else "N/A"
-        embed.add_field(name=f"Key {i}", value=f"`{key}`\nStatus: **{status}**\nExpires: {expires_str}", inline=False)
-
-    await _message(embed=embed, ephemeral=True)
-
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="info", description="Get detailed information about a key")
 async def key_info(interaction: discord.Interaction, key: str):
     """Get detailed information about a key"""
     if not await check_permissions(interaction):
         return
-
+    
     key_data = key_manager.get_key_info(key)
     if not key_data:
-        await _message("❌ Key not found.", ephemeral=True)
+        await interaction.response.send_message("❌ Key not found.", ephemeral=True)
         return
-
+    
     embed = discord.Embed(
         title=f"🔍 Key Information",
         color=0x2d6cdf
     )
-
+    
     # Get user info
     user = interaction.guild.get_member(key_data["created_by"])
     user_name = user.display_name if user else "Unknown User"
-
+    
     embed.add_field(name="Created By", value=user_name, inline=True)
     embed.add_field(name="Status", value="✅ Active" if key_data["is_active"] else "❌ Revoked", inline=True)
     embed.add_field(name="Created", value=("Not activated yet" if not key_data.get('activation_time') else f"<t:{key_data['activation_time']}:R>"), inline=True)
     embed.add_field(name="Expires", value=("Not activated yet" if not key_data.get('expiration_time') else f"<t:{key_data['expiration_time']}:R>"), inline=True)
-
+    
     if key_data["channel_id"]:
         embed.add_field(name="Channel Locked", value=f"<#{key_data['channel_id']}>", inline=True)
-
+    
     if key_data["machine_id"]:
         embed.add_field(name="Machine ID", value=f"`{key_data['machine_id']}`", inline=True)
         embed.add_field(name="Activated", value=f"<t:{key_data['activated']}:R>", inline=True)
-
+    
     embed.add_field(name="Usage Count", value=key_data.get("usage_count", 0), inline=True)
+    
+    await interaction.response.send_message(embed=embed)
 
-    await _message(embed=embed)
-
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="backup", description="Create a backup of all keys")
 async def backup_keys(interaction: discord.Interaction):
 	"""Create a backup of all keys"""
-
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
 	if not await check_permissions(interaction):
 		return
-
+	
 	backup_file = key_manager.backup_keys()
-
+	
 	embed = discord.Embed(
 		title="💾 Backup Created",
 		description=f"Keys backup saved to `{backup_file}`",
 		color=0x00ff00
 	)
-
+	
 	embed.add_field(name="Total Keys", value=len(key_manager.keys), inline=True)
 	embed.add_field(name="Backup Time", value=f"<t:{int(time.time())}:F>", inline=True)
+	
+	await interaction.response.send_message(embed=embed)
 
-	await _message(embed=embed)
-
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="restore", description="Restore keys from a backup file")
 async def restore_keys(interaction: discord.Interaction, backup_file: str):
 	"""Restore keys from a backup file"""
-
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
 	if not await check_permissions(interaction):
 		return
-
+	
 	if not os.path.exists(backup_file):
-		await _message("❌ Backup file not found.", ephemeral=True)
+		await interaction.response.send_message("❌ Backup file not found.", ephemeral=True)
 		return
-
+	
 	if key_manager.restore_from_backup(backup_file):
 		embed = discord.Embed(
 			title="🔄 Backup Restored",
 			description="Keys have been successfully restored from backup.",
 			color=0x00ff00
 		)
-
+		
 		embed.add_field(name="Total Keys", value=len(key_manager.keys), inline=True)
 		embed.add_field(name="Restore Time", value=f"<t:{int(time.time())}:F>", inline=True)
-
-		await _message(embed=embed)
+		
+		await interaction.response.send_message(embed=embed)
 	else:
-		await _message("❌ Failed to restore from backup.", ephemeral=True)
+		await interaction.response.send_message("❌ Failed to restore from backup.", ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="status", description="Show bot status and statistics")
 async def bot_status(interaction: discord.Interaction):
 	"""Show bot status and statistics"""
-
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
 	if not await check_permissions(interaction):
 		return
-
+	
 	total_keys = len(key_manager.keys)
 	active_keys = sum(1 for k in key_manager.keys.values() if k["is_active"])
 	revoked_keys = total_keys - active_keys
-
+	
 	# Calculate total usage
 	total_usage = sum(k.get("usage_count", 0) for k in key_manager.key_usage.values())
-
+	
 	embed = discord.Embed(
 		title="📊 Bot Status",
 		color=0x2d6cdf
 	)
-
+	
 	embed.add_field(name="Total Keys", value=total_keys, inline=True)
 	embed.add_field(name="Active Keys", value=active_keys, inline=True)
 	embed.add_field(name="Revoked Keys", value=revoked_keys, inline=True)
 	embed.add_field(name="Total Usage", value=total_usage, inline=True)
 	embed.add_field(name="Uptime", value=f"<t:{int(bot.start_time.timestamp())}:R>", inline=True)
 	embed.add_field(name="Latency", value=f"{round(bot.latency * 1000)}ms", inline=True)
+	
+	await interaction.response.send_message(embed=embed)
 
-	await _message(embed=embed)
-
-# New bulk key generation command 
-@owner_role_only()
+# New bulk key generation command for special admins
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="generatekeys", description="Generate multiple keys of different types ()")
+@bot.tree.command(name="generatekeys", description="Generate multiple keys of different types (Special Admin Only)")
 async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int, weekly_count: int, monthly_count: int, lifetime_count: int):
-    """Generate multiple keys of different types"""
-
+    """Generate multiple keys of different types - Special Admin Only"""
+    # Check if user is a special admin
+    if interaction.user.id not in SPECIAL_ADMIN_IDS:
+        await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+        return
+    
     if daily_count < 0 or weekly_count < 0 or monthly_count < 0 or lifetime_count < 0:
-        await _message("❌ **Invalid Input:** All counts must be 0 or positive numbers.", ephemeral=True)
+        await interaction.response.send_message("❌ **Invalid Input:** All counts must be 0 or positive numbers.", ephemeral=True)
         return
-
+    
     if daily_count == 0 and weekly_count == 0 and monthly_count == 0 and lifetime_count == 0:
-        await _message("❌ **Invalid Input:** At least one key type must have a count greater than 0.", ephemeral=True)
+        await interaction.response.send_message("❌ **Invalid Input:** At least one key type must have a count greater than 0.", ephemeral=True)
         return
-
+    
     # Generate the keys
     generated_keys = key_manager.generate_bulk_keys(daily_count, weekly_count, monthly_count, lifetime_count)
 
@@ -1301,34 +1300,38 @@ async def generate_bulk_keys(interaction: discord.Interaction, daily_count: int,
         description="Keys have been generated and saved to the system.",
         color=0x00ff00
     )
-
+    
     embed.add_field(name="📅 Daily Keys (1 day)", value=f"Generated: {len(generated_keys['daily'])}", inline=True)
     embed.add_field(name="📅 Weekly Keys (7 days)", value=f"Generated: {len(generated_keys['weekly'])}", inline=True)
     embed.add_field(name="📅 Monthly Keys (30 days)", value=f"Generated: {len(generated_keys['monthly'])}", inline=True)
     embed.add_field(name="📅 Lifetime Keys (365 days)", value=f"Generated: {len(generated_keys['lifetime'])}", inline=True)
-
+    
     embed.add_field(name="💾 Status", value="✅ All keys saved to database and website", inline=False)
     embed.add_field(name="📱 Website", value="Keys are now available on your website!", inline=False)
-
-    await _message(embed=embed, ephemeral=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # New command to view available keys by type
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="viewkeys", description="View all available keys by type ()")
+@bot.tree.command(name="viewkeys", description="View all available keys by type (Special Admin Only)")
 async def view_available_keys(interaction: discord.Interaction):
-    """View all available keys grouped by type - """
-
+    """View all available keys grouped by type - Special Admin Only"""
+    # Check if user is a special admin
+    if interaction.user.id not in SPECIAL_ADMIN_IDS:
+        await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+        return
+    
     # Get available keys by type
     available_keys = key_manager.get_available_keys_by_type()
-
+    
     # Create embed showing available keys
     embed = discord.Embed(
         title="🔑 Available Keys by Type",
         description="All unassigned keys currently in the system",
         color=0x2d6cdf
     )
-
+    
     def list_block(items):
         if not items:
             return ["None"]
@@ -1365,16 +1368,20 @@ async def view_available_keys(interaction: discord.Interaction):
     for idx, chunk in enumerate(list_block(lifetime_keys), start=1):
         suffix = f" (part {idx})" if idx > 1 else ""
         embed.add_field(name=f"📅 Lifetime Keys ({len(lifetime_keys)}){suffix}", value=chunk, inline=False)
-
+    
     embed.set_footer(text="Use /generatekeys to create more keys")
-    await _message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="delete", description="Completely delete a key ()")
+@bot.tree.command(name="delete", description="Completely delete a key (Special Admin Only)")
 async def delete_key(interaction: discord.Interaction, key: str):
-    """Completely delete a key - """
-
+    """Completely delete a key - Special Admin Only"""
+    # Check if user is a special admin
+    if interaction.user.id not in SPECIAL_ADMIN_IDS:
+        await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+        return
+    
     if key_manager.delete_key(key):
         # Force immediate backup upload after delete
         try:
@@ -1392,34 +1399,38 @@ async def delete_key(interaction: discord.Interaction, key: str):
         embed.add_field(name="Database", value="📁 Moved to deleted keys", inline=True)
         embed.add_field(name="SelfBot Access", value="❌ No access, deleted key", inline=False)
 
-        await _message(embed=embed)
+        await interaction.response.send_message(embed=embed)
     else:
-        await _message("❌ Key not found or already deleted.", ephemeral=True)
+        await interaction.response.send_message("❌ Key not found or already deleted.", ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="deletedkeys", description="View all deleted keys ()")
+@bot.tree.command(name="deletedkeys", description="View all deleted keys (Special Admin Only)")
 async def view_deleted_keys(interaction: discord.Interaction):
-    """View all deleted keys - """
-
-    deleted_keys = key_manager.deleted_keys
-
-    if not deleted_keys:
-        await _message("📭 No deleted keys found.", ephemeral=True)
+    """View all deleted keys - Special Admin Only"""
+    # Check if user is a special admin
+    if interaction.user.id not in SPECIAL_ADMIN_IDS:
+        await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
         return
-
+    
+    deleted_keys = key_manager.deleted_keys
+    
+    if not deleted_keys:
+        await interaction.response.send_message("📭 No deleted keys found.", ephemeral=True)
+        return
+    
     embed = discord.Embed(
         title="🗑️ Deleted Keys Database",
         description=f"Total deleted keys: {len(deleted_keys)}",
         color=0xff0000
     )
-
+    
     # Show first 10 deleted keys
     for i, (key, data) in enumerate(list(deleted_keys.items())[:10]):
         deleted_time = f"<t:{data.get('deleted_at', 0)}:R>"
         created_time = f"<t:{data.get('activation_time', 0)}:R>"
         duration = data.get('duration_days', 'Unknown')
-
+        
         lines_val = [
             f"Duration: {duration} days",
             f"Created: {created_time}",
@@ -1430,62 +1441,67 @@ async def view_deleted_keys(interaction: discord.Interaction):
             value="\n".join(lines_val),
             inline=True
         )
-
+    
     if len(deleted_keys) > 10:
         embed.set_footer(text=f"Showing 10 of {len(deleted_keys)} deleted keys")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    await _message(embed=embed, ephemeral=True)
-
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="activekeys", description="List all active keys with remaining time and assigned user")
 async def active_keys(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    if not await check_permissions(interaction):
-        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
-        return
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
+	if not await check_permissions(interaction):
+		return
 
-    now = int(time.time())
-    active_items = []
-    for key, data in key_manager.keys.items():
-        if data.get("is_active", False):
-            expires = data.get("expiration_time")
-            exp_ts = int(expires or 0)
-            remaining = max(0, exp_ts - now)
-            user_id = data.get("user_id", 0)
-            user_display = "Unassigned" if user_id == 0 else f"<@{user_id}>"
-            active_items.append((key, remaining, user_display))
+	now = int(time.time())
+	active_items = []
+	for key, data in key_manager.keys.items():
+		if data.get("is_active", False):
+			expires = data.get("expiration_time")
+			exp_ts = int(expires or 0)
+			remaining = max(0, exp_ts - now)
+			user_id = data.get("user_id", 0)
+			user_display = "Unassigned" if user_id == 0 else f"<@{user_id}>"
+			active_items.append((key, remaining, user_display))
 
-    if not active_items:
-        await interaction.followup.send("📭 No active keys found.", ephemeral=True)
-        return
+	if not active_items:
+		await interaction.response.send_message("📭 No active keys found.", ephemeral=True)
+		return
 
-    # Sort by soonest expiration
-    active_items.sort(key=lambda x: x[1])
+	# Sort by soonest expiration
+	active_items.sort(key=lambda x: x[1])
 
-    def fmt_duration(seconds: int) -> str:
-        days = seconds // 86400
-        hours = (seconds % 86400) // 3600
-        minutes = (seconds % 3600) // 60
-        return f"{days}d {hours}h {minutes}m"
+	def fmt_duration(seconds: int) -> str:
+		days = seconds // 86400
+		hours = (seconds % 86400) // 3600
+		minutes = (seconds % 3600) // 60
+		return f"{days}d {hours}h {minutes}m"
 
-    lines = [f"`{k}` — {fmt_duration(rem)} left — {user}" for k, rem, user in active_items[:20]]
+	lines = [f"`{k}` — {fmt_duration(rem)} left — {user}" for k, rem, user in active_items[:20]]
 
-    embed = discord.Embed(
-        title="🔑 Active Keys",
-        description="\n".join(lines),
-        color=0x00AAFF
-    )
-    if len(active_items) > 20:
-        embed.set_footer(text=f"Showing 20 of {len(active_items)} active keys")
+	embed = discord.Embed(
+		title="🔑 Active Keys",
+		description="\n".join(lines),
+		color=0x00AAFF
+	)
+	if len(active_items) > 20:
+		embed.set_footer(text=f"Showing 20 of {len(active_items)} active keys")
 
-    await interaction.followup.send(embed=embed, ephemeral=True)
+	await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="expiredkeys", description="List expired keys")
 async def expired_keys(interaction: discord.Interaction):
-
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
 	if not await check_permissions(interaction):
 		return
 	now = int(time.time())
@@ -1498,7 +1514,7 @@ async def expired_keys(interaction: discord.Interaction):
 			items.append((key, expires, user_display))
 
 	if not items:
-		await _message("✅ No expired keys.", ephemeral=True)
+		await interaction.response.send_message("✅ No expired keys.", ephemeral=True)
 		return
 
 	items.sort(key=lambda x: x[1], reverse=True)
@@ -1512,45 +1528,47 @@ async def expired_keys(interaction: discord.Interaction):
 	if len(items) > 20:
 		embed.set_footer(text=f"Showing 20 of {len(items)} expired keys")
 
-	await _message(embed=embed, ephemeral=True)
+	await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="swapmachineid", description="Swap a user's active key to a new machine ID ()")
+@bot.tree.command(name="swapmachineid", description="Swap a user's active key to a new machine ID (Special Admin Only)")
 async def swap_machine_id(interaction: discord.Interaction, user: discord.Member, new_machine_id: str):
-    await interaction.response.defer(ephemeral=True)
-    if not await check_permissions(interaction):
-        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
-        return
-    try:
-        # Find the user's active key
-        key = None
-        for k, data in key_manager.keys.items():
-            if data.get('user_id') == user.id and data.get('is_active', False):
-                key = k
-                break
-        if not key:
-            await interaction.followup.send("❌ No active key found for that user.", ephemeral=True)
-            return
-        # Update the machine_id
-        data = key_manager.keys[key]
-        data['machine_id'] = str(new_machine_id)
-        # Save
-        key_manager.save_data()
-        try:
-            key_manager.add_log('rebind', key, user_id=str(user.id), details={'machine_id': str(new_machine_id)})
-        except Exception:
-            pass
-        await interaction.followup.send(f"✅ Machine ID swapped for user {user.mention}.", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed: {e}", ephemeral=True)
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
+	if not await check_permissions(interaction):
+		return
+	try:
+		# Find the user's active key
+		key = None
+		for k, data in key_manager.keys.items():
+			if data.get('user_id') == user.id and data.get('is_active', False):
+				key = k
+				break
+		if not key:
+			await interaction.response.send_message("❌ No active key found for that user.", ephemeral=True)
+			return
+		# Update the machine_id
+		data = key_manager.keys[key]
+		data['machine_id'] = str(new_machine_id)
+		# Save
+		key_manager.save_data()
+		try:
+			key_manager.add_log('rebind', key, user_id=str(user.id), details={'machine_id': str(new_machine_id)})
+		except Exception:
+			pass
+		await interaction.response.send_message(f"✅ Machine ID swapped for user {user.mention}.", ephemeral=True)
+	except Exception as e:
+		await interaction.response.send_message(f"❌ Failed: {e}", ephemeral=True)
 
-@owner_role_only()
+@admin_role_only()
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="synccommands", description="Force-sync application commands in this guild")
 async def sync_commands(interaction: discord.Interaction):
     if not interaction.guild or interaction.guild.id != GUILD_ID:
-        await _message("❌ Wrong server.", ephemeral=True)
+        await interaction.response.send_message("❌ Wrong server.", ephemeral=True)
         return
     try:
         await interaction.response.defer(ephemeral=True)
@@ -1566,7 +1584,7 @@ async def sync_commands(interaction: discord.Interaction):
             if interaction.response.is_done():
                 await interaction.followup.send(f"❌ Sync failed: {e}")
             else:
-                await _message(f"❌ Sync failed: {e}", ephemeral=True)
+                await interaction.response.send_message(f"❌ Sync failed: {e}", ephemeral=True)
         except Exception:
             pass
 
@@ -1582,7 +1600,7 @@ async def on_member_join(member):
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.CommandOnCooldown):
         try:
-            await _message(f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
+            await interaction.response.send_message(f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
         except Exception:
             try:
                 await interaction.followup.send(f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.")
@@ -1590,7 +1608,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
                 pass
     elif isinstance(error, discord.app_commands.MissingPermissions):
         try:
-            await _message("❌ You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
         except Exception:
             try:
                 await interaction.followup.send("❌ You don't have permission to use this command.")
@@ -1598,7 +1616,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
                 pass
     elif isinstance(error, discord.app_commands.BotMissingPermissions):
         try:
-            await _message("❌ I don't have the required permissions to execute this command.", ephemeral=True)
+            await interaction.response.send_message("❌ I don't have the required permissions to execute this command.", ephemeral=True)
         except Exception:
             try:
                 await interaction.followup.send("❌ I don't have the required permissions to execute this command.")
@@ -1606,7 +1624,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
                 pass
     elif isinstance(error, discord.app_commands.CheckFailure):
         try:
-            await _message("❌ You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
         except Exception:
             try:
                 await interaction.followup.send("❌ You don't have permission to use this command.")
@@ -1614,7 +1632,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
                 pass
     else:
         try:
-            await _message(f"❌ An error occurred: {str(error)}", ephemeral=True)
+            await interaction.response.send_message(f"❌ An error occurred: {str(error)}", ephemeral=True)
         except Exception:
             try:
                 await interaction.followup.send(f"❌ An error occurred: {str(error)}")
@@ -1633,14 +1651,89 @@ async def on_command_error(ctx, error):
     else:
         await ctx.send(f"❌ An error occurred: {str(error)}")
 
+# Coinbase Commerce webhook handler
+from aiohttp import web
+
+async def coinbase_webhook(request: web.Request):
+    try:
+        secret = os.getenv('COMMERCE_WEBHOOK_SECRET','')
+        sig = request.headers.get('X-CC-Webhook-Signature','')
+        body = await request.read()
+        import hmac, hashlib
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return web.Response(status=400, text='bad sig')
+        data = json.loads(body.decode())
+        event = data.get('event', {})
+        type_ = event.get('type','')
+        charge = event.get('data',{})
+        meta = (charge.get('metadata') or {})
+        user_id = meta.get('user_id')
+        key_type = meta.get('key_type','')
+        amount = meta.get('amount','')
+        # Log to webhook if configured
+        try:
+            if PURCHASE_LOG_WEBHOOK:
+                color = 0xF59E0B if 'pending' in type_ else 0x22C55E if 'confirmed' in type_ else 0x64748B
+                embed = {
+                    'title': 'Autobuy',
+                    'description': f"{type_}",
+                    'color': color,
+                    'fields': [
+                        {'name':'User ID','value': str(user_id) if user_id else 'unknown','inline': True},
+                        {'name':'Key','value': key_type or '','inline': True},
+                        {'name':'Amount','value': amount or '','inline': True},
+                    ]
+                }
+                requests.post(PURCHASE_LOG_WEBHOOK, json={'embeds':[embed]}, timeout=6)
+        except Exception:
+            pass
+        # On confirmed, generate and post the key to the ticket channel only visible to the buyer
+        if type_ == 'charge:confirmed' and user_id and key_type:
+            try:
+                # Pick duration by key_type
+                durations = {'daily':1, 'weekly':7, 'monthly':30, 'lifetime':365}
+                duration_days = durations.get(key_type, 30)
+                # Issue a key
+                gen_by = int(user_id)
+                key = key_manager.generate_key(gen_by, None, duration_days)
+                # Post in ticket channel (from metadata) and restrict visibility
+                ticket_channel_id = meta.get('ticket_channel_id')
+                guild = bot.get_guild(GUILD_ID)
+                if guild and ticket_channel_id:
+                    try:
+                        chan = guild.get_channel(int(ticket_channel_id))
+                        if chan:
+                            # Create a post only visible to the buyer (ephemeral-like via permission overwrite)
+                            member = guild.get_member(int(user_id))
+                            if member:
+                                try:
+                                    await chan.set_permissions(member, read_messages=True, send_messages=True)
+                                except Exception:
+                                    pass
+                            await chan.send(f"<@{user_id}> Your {key_type} key: `{key}`")
+                            # Optionally tighten after sending
+                    except Exception:
+                        pass
+                # Log in channel 1402647285145538630
+                try:
+                    ch = bot.get_channel(1402647285145538630)
+                    if ch:
+                        await ch.send(f"<@{user_id}> ({user_id}) Has bought {key_type} key for {amount}")
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        return web.Response(text='ok')
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
 
 # Add a simple health check for Render
 import http.server
 import socketserver
 import threading
 
-def start_health_check():
-    """Start a simple HTTP server for health checks"""
+
     import base64, json as _json, hmac, hashlib
 
     def _sign_payload(payload: str) -> str:
@@ -1700,6 +1793,195 @@ def start_health_check():
                 bound_ok = True
         return bound_ok if machine_id else has_active
 
+    def _render_login_page(machine_id: str, error: str = "") -> str:
+        return f'''
+        <html><head><title>Selfbot Login</title>
+        <style>
+        body {{ background: #181a20; color: #f8f8f2; font-family: Inter, Arial, sans-serif; }}
+        .login-box {{ background: #23243a; border-radius: 12px; padding: 32px; max-width: 400px; margin: 80px auto; box-shadow: 0 2px 16px #0002; }}
+        label {{ display: block; margin-top: 16px; color: #bd93f9; font-weight: 600; }}
+        input {{ width: 100%; padding: 10px; border-radius: 8px; border: none; margin-top: 4px; background: #282a36; color: #f8f8f2; }}
+        button {{ margin-top: 24px; width: 100%; padding: 12px; border-radius: 8px; border: none; background: #bd93f9; color: #181a20; font-weight: bold; font-size: 16px; cursor: pointer; }}
+        .error {{ color: #ff5555; margin-top: 12px; }}
+        </style></head><body>
+        <form class="login-box" method="POST" action="/login">
+            <h2 style="color:#ff79c6;">Selfbot Login</h2>
+            <label>Machine ID</label>
+            <input type="text" name="machine_id" value="{machine_id}" readonly />
+            <label>Activation Key</label>
+            <input type="text" name="key" required />
+            <label>Token</label>
+            <input type="text" name="token" required />
+            <label>User ID</label>
+            <input type="text" name="user_id" required />
+            <button type="submit">Login</button>
+            {f'<div class="error">{error}</div>' if error else ''}
+        </form></body></html>
+        '''
+
+    class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            cookies = _parse_cookies(self.headers.get('Cookie'))
+            session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
+            authed_uid = int(session.get('user_id')) if session else None
+            authed_mid = str(session.get('machine_id')) if session else None
+            authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
+
+            # Always show login page first if not authenticated (except favicon)
+            if not authed_ok and self.path != '/login' and self.path != '/favicon.ico':
+                self.send_response(303)
+                self.send_header('Location', '/login')
+                self.end_headers()
+                return
+
+            # Login page
+            if self.path == '/login':
+                machine_id = self.headers.get('X-Machine-Id') or secrets.token_hex(8)
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(_render_login_page(machine_id).encode())
+                return
+
+                        # After login, show web selfbot GUI (mimics selfbot.py)
+                        if authed_ok:
+                                self.send_response(200)
+                                self.send_header('Content-type', 'text/html')
+                                self.end_headers()
+                                self.wfile.write(f"""
+                                <html><head><title>Selfbot Web GUI</title>
+                                <style>
+                                body {{ background: #282a36; color: #f8f8f2; font-family: Inter, Arial, sans-serif; }}
+                                .container {{ max-width: 900px; margin: 40px auto; background: #23243a; border-radius: 14px; padding: 32px; box-shadow: 0 2px 16px #0002; }}
+                                h2 {{ color: #ff79c6; }}
+                                label {{ color: #bd93f9; font-weight: 600; margin-top: 16px; display: block; }}
+                                input, textarea {{ width: 100%; padding: 10px; border-radius: 8px; border: none; margin-top: 4px; background: #282a36; color: #f8f8f2; }}
+                                button {{ margin-top: 18px; padding: 12px 24px; border-radius: 8px; border: none; background: #bd93f9; color: #181a20; font-weight: bold; font-size: 16px; cursor: pointer; }}
+                                .row {{ display: flex; gap: 24px; }}
+                                .col {{ flex: 1; }}
+                                .stats {{ margin-top: 24px; background: #181a20; border-radius: 8px; padding: 16px; }}
+                                .logout {{ float: right; color: #ff5555; text-decoration: none; font-weight: bold; }}
+                                </style>
+                                <script>
+                                async function sendMessage() {{
+                                        const msg = document.getElementById('msg').value;
+                                        const channel = document.getElementById('channel').value;
+                                        if (!msg || !channel) return alert('Message and channel required');
+                                        const res = await fetch('/api/web-selfbot/send', {{
+                                                method: 'POST',
+                                                headers: {{'Content-Type': 'application/json'}},
+                                                body: JSON.stringify({{message: msg, channel: channel}})
+                                        }});
+                                        const data = await res.json();
+                                        alert(data.success ? 'Message sent!' : ('Failed: ' + (data.error||'Unknown')));
+                                }}
+                                async function getStats() {{
+                                        const res = await fetch('/api/web-selfbot/stats');
+                                        const data = await res.json();
+                                        document.getElementById('stat-messages').innerText = data.messages_sent || 0;
+                                        document.getElementById('stat-uptime').innerText = data.uptime || '0s';
+                                }}
+                                window.onload = getStats;
+                                </script>
+                                </head><body>
+                                <div class="container">
+                                <a class="logout" href="/logout">Logout</a>
+                                <h2>Selfbot Web GUI</h2>
+                                <div class="row">
+                                    <div class="col">
+                                        <label>Channel ID</label>
+                                        <input id="channel" type="text" placeholder="Enter channel ID" />
+                                        <label>Message</label>
+                                        <textarea id="msg" rows="3" placeholder="Type your message..."></textarea>
+                                        <button onclick="sendMessage()">Send Message</button>
+                                    </div>
+                                    <div class="col stats">
+                                        <h3>Statistics</h3>
+                                        <div>Messages Sent: <span id="stat-messages">0</span></div>
+                                        <div>Uptime: <span id="stat-uptime">0s</span></div>
+                                    </div>
+                                </div>
+                                </div>
+                                </body></html>
+                                """.encode())
+                                return
+        def do_POST(self):
+            # API endpoint for sending messages from web selfbot
+            if self.path == '/api/web-selfbot/send':
+                import json
+                length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(length).decode()
+                try:
+                    data = json.loads(body)
+                    # Here, implement sending a message as the selfbot (backend logic)
+                    # For demo, just return success
+                    # TODO: Integrate with your selfbot backend or Discord API
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': True}).encode())
+                except Exception as e:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+                return
+            # API endpoint for stats
+            if self.path == '/api/web-selfbot/stats':
+                import json
+                # TODO: Replace with real stats from backend
+                stats = {'messages_sent': 0, 'uptime': '0s'}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(stats).encode())
+                return
+
+            # Fallback: redirect to login
+            self.send_response(303)
+            self.send_header('Location', '/login')
+            self.end_headers()
+
+        def do_POST(self):
+            if self.path == '/login':
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                import urllib.parse
+                data = urllib.parse.parse_qs(body)
+                key = (data.get('key', [''])[0]).strip()
+                token = (data.get('token', [''])[0]).strip()
+                user_id = (data.get('user_id', [''])[0]).strip()
+                machine_id = (data.get('machine_id', [''])[0]).strip()
+                # Validate activation key, user_id, and machine_id
+                valid = False
+                for k, d in key_manager.keys.items():
+                    if k == key and d.get('user_id') in (0, int(user_id)) and d.get('is_active', False):
+                        # Optionally check machine binding or bind now
+                        if not d.get('machine_id'):
+                            d['machine_id'] = machine_id
+                            d['user_id'] = int(user_id)
+                            key_manager.save_data()
+                        if str(d.get('machine_id')) == str(machine_id):
+                            valid = True
+                if valid:
+                    # Set session cookie
+                    session = _encode_session(user_id, machine_id)
+                    self.send_response(303)
+                    self.send_header('Set-Cookie', f'panel_session={session}; Path=/; HttpOnly; SameSite=Lax')
+                    self.send_header('Location', '/')
+                    self.end_headers()
+                else:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(_render_login_page(machine_id, error="Invalid activation key, user, or machine.").encode())
+                return
+            # ...existing POST handlers...
+            # Fallback: redirect to login
+            self.send_response(303)
+            self.send_header('Location', '/login')
+            self.end_headers()
+
     class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
         def do_HEAD(self):
             if self.path == '/':
@@ -1709,7 +1991,7 @@ def start_health_check():
                 return
             self.send_response(404)
             self.end_headers()
-
+ 
         def do_GET(self):
             try:
                 # Session check (kept for potential future use)
@@ -1793,7 +2075,7 @@ def start_health_check():
                         lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
                         more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr)>50 else ''
                         return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
-
+                    
                     form_html = f"""
                     <html><head><title>Generate Keys</title>
                       <style>
@@ -3107,7 +3389,7 @@ def start_health_check():
                         self.end_headers()
                         self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
                         return
-
+                
                 # Selfbot heartbeat: mark user active with timestamp
                 if self.path == '/api/selfbot-heartbeat':
                     try:
@@ -3138,7 +3420,7 @@ def start_health_check():
                         self.end_headers()
                         self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
                         return
-
+                
                 # Active users count
                 if self.path == '/api/active-users':
                     try:
@@ -3171,7 +3453,7 @@ def start_health_check():
                     self.wfile.write(f"Internal Server Error: {e}".encode())
                 except Exception:
                     pass
-
+    
     try:
         # Use Render's PORT environment variable or default to 8080
         port = int(os.getenv('PORT', 8080))
@@ -3181,6 +3463,7 @@ def start_health_check():
         # Start aiohttp app for webhooks
         async def _run_aiohttp():
             app = web.Application()
+            app.router.add_post('/webhook/coinbase-commerce', coinbase_webhook)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', port+1)
@@ -3201,308 +3484,12 @@ def start_health_check():
 async def on_error(event, *args, **kwargs):
     print(f"❌ Error in {event}: {args}")
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="listcommands", description="List registered application commands (debug)")
-async def listcommands(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer(ephemeral=True)
-        cmds = bot.tree.get_commands(guild=discord.Object(id=GUILD_ID))
-        names = [c.name for c in cmds]
-        await interaction.followup.send("\n".join(names) or "(no commands)")
-    except Exception as e:
-        if interaction.response.is_done():
-            await interaction.followup.send(f"Error: {e}")
-        else:
-            await _message(f"Error: {e}", ephemeral=True)
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="backupchannel", description="Set the channel to auto-backup keys and auto-restore on deploy")
-async def set_backup_channel_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
-    try:
-        global BACKUP_CHANNEL_ID
-        BACKUP_CHANNEL_ID = int(channel.id)
-        CONFIG['BACKUP_CHANNEL_ID'] = BACKUP_CHANNEL_ID
-        save_config()
-        await _message(f"✅ Backup channel set to {channel.mention}.", ephemeral=True)
-        # Ensure backup loop is running
-        try:
-            if not periodic_backup_task.is_running():
-                periodic_backup_task.start()
-        except Exception:
-            pass
-        # Optional immediate backup
-        try:
-            payload = key_manager.build_backup_payload()
-            data = json.dumps(payload, indent=2).encode()
-            file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
-            await channel.send(content="Manual backup after setting channel", file=file)
-        except Exception:
-            pass
-    except Exception as e:
-        await _message(f"❌ Failed to set backup channel: {e}", ephemeral=True)
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="keylogs", description="Show recent key logs (last 15)")
-async def keylogs(interaction: discord.Interaction):
-    if not await check_permissions(interaction):
-        return
-    logs = list(reversed(key_manager.key_logs[-15:]))
-    if not logs:
-        await _message("📭 No logs yet.", ephemeral=True)
-        return
-    lines = []
-    for e in logs:
-        when = f"<t:{e.get('ts',0)}:R>"
-        event = e.get('event','?')
-        key = e.get('key','')
-        uid = e.get('user_id')
-        lines.append(f"{when} — {event.upper()} — `{key}` — {('<@'+str(uid)+'>') if uid else ''}")
-    embed = discord.Embed(title="📝 Recent Key Logs", description="\n".join(lines), color=0x8b5cf6)
-    await _message(embed=embed, ephemeral=True)
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="leaderboard", description="Show the top users by messages sent in SelfBot")
-async def leaderboard(interaction: discord.Interaction):
-    """Show the top users by messages sent in SelfBot"""
-
-    # Use MESSAGE_STATS to get message counts
-    # MESSAGE_STATS is a dict: {user_id (str): message_count (int)}
-    if not MESSAGE_STATS:
-        await _message("No message data yet.", ephemeral=True)
-        return
-
-    # Sort users by message count, descending
-    top = sorted(MESSAGE_STATS.items(), key=lambda x: x[1], reverse=True)[:10]
-    if not top:
-        await _message("No message data yet.", ephemeral=True)
-        return
-
-    lines = []
-    for idx, (uid, count) in enumerate(top, start=1):
-        lines.append(f"**{idx}.** <@{uid}> — `{count}` messages sent")
-
-    embed = discord.Embed(
-        title="🏆 Message Leaderboard",
-        description="\n".join(lines),
-        color=0xFFD700
-    )
-    await _message(embed=embed, ephemeral=True)
-
-pending_payments = {}
-
-async def issue_key(plan: str) -> str:
-    # You can customize this to use your KeyManager logic
-    duration = {
-        "daily": 1,
-        "weekly": 7,
-        "monthly": 30,
-        "lifetime": 365
-    }.get(plan, 30)
-    # Replace 0 with the user_id if you want to assign the key to the user
-    return key_manager.generate_key(user_id=0, duration_days=duration)
-
-class PlanSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Daily - $3", value="daily"),
-            discord.SelectOption(label="Weekly - $10", value="weekly"),
-            discord.SelectOption(label="Monthly - $15", value="monthly"),
-            discord.SelectOption(label="Lifetime - $30", value="lifetime"),
-        ]
-        super().__init__(placeholder="Select a plan", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        try:
-            view: "AutoBuyView" = self.view # type: ignore
-            view.selected_plan = self.values[0]
-            view.switch_to_crypto()
-            await interaction.response.edit_message(
-                content=f"Selected plan: {view.selected_plan}. Now choose a cryptocurrency.",
-                view=view
-            )
-        except Exception as e:
-            print(f"PlanSelect.callback error: {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
-
-class CryptoSelect(discord.ui.Select):
-    CRYPTO_MINIMUMS = {
-        "BTC": (0.0001, 7.0),
-        "ETH": (0.003, 5.5),
-        "ETH(not working atm)": (0.003, 5.5),
-        "LTC": (0.05, 3.5),
-        "USDC": (3.0, 3.0),
-        "USDTERC20": (3.0, 3.0),
-        "USDTTRC20": (3.0, 3.0),
-    }
-
-    def __init__(self):
-        options = [discord.SelectOption(label=c, value=c) for c in ALLOWED_PAY_CURRENCIES]
-        super().__init__(placeholder="Select a cryptocurrency", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        view: "AutoBuyView" = self.view # type: ignore
-        chosen_currency = self.values[0]
-        min_amount, min_usd = self.CRYPTO_MINIMUMS.get(chosen_currency, (None, None))
-        warning = (
-            f"⛔ **Minimum send for {chosen_currency}: {min_amount} {chosen_currency} (${min_usd} USD)**"
-            if min_amount and min_usd else ""
-        )
-        await view.create_invoice_and_reply(interaction, chosen_currency, extra_warning=warning)
-
-class AutoBuyView(discord.ui.View):
-    def __init__(self, requester_id: int, timeout: float = 180):
-        super().__init__(timeout=timeout)
-        self.requester_id = requester_id
-        self.selected_plan: str | None = None
-        self.add_item(PlanSelect())
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.requester_id
-
-    def switch_to_crypto(self):
-        self.clear_items()
-        self.add_item(CryptoSelect())
-
-    async def create_invoice_and_reply(self, interaction: discord.Interaction, chosen_currency: str, extra_warning: str = ""):
-        if not self.selected_plan or self.selected_plan not in PLAN_PRICING:
-            await interaction.response.edit_message(content="Invalid plan.", view=None)
-            return
-
-        price = PLAN_PRICING[self.selected_plan]
-        order_id = f"{interaction.user.id}-{int(time.time())}"
-        pay_currency = chosen_currency
-
-        # Create invoice with NOWPayments
-        try:
-            async with aiohttp.ClientSession() as session:
-                data = await _np_client.create_invoice(
-                    session=session,
-                    price_amount=price,
-                    plan=self.selected_plan,
-                    order_id=order_id,
-                    pay_currency=pay_currency,
-                )
-        except Exception as e:
-            print(f"Failed to create invoice: {e}")
-            await interaction.response.edit_message(content="Failed to create invoice. Try again later.", view=None)
-            return
-
-        invoice_id = str(data.get("id") or data.get("invoice_id") or data.get("order_id") or "unknown")
-        invoice_url = data.get("invoice_url") or data.get("url") or ""
-        if not invoice_url:
-            await interaction.response.edit_message(content="Could not get invoice URL. Try again later.", view=None)
-            return
-
-        # Store pending payment
-        pending_payments[invoice_id] = {
-            "user_id": interaction.user.id,
-            "plan": self.selected_plan,
-            "timestamp": time.time(),
-            "order_id": order_id,
-        }
-
-        msg = (
-            f"Invoice created for {self.selected_plan} (${price}).\n"
-            f"Pay here: {invoice_url}\n"
-            f"You'll receive your key via DM after confirmation."
-        )
-        if extra_warning:
-            msg += f"\n\n{extra_warning}"
-
-        await interaction.response.edit_message(content=msg, view=None)
-
-        # Start polling for payment confirmation (if no IPN)
-        asyncio.create_task(self.poll_for_payment(invoice_id, interaction.user.id, self.selected_plan))
-
-    async def poll_for_payment(self, invoice_id: str, user_id: int, plan: str):
-        # Poll NOWPayments for payment status (every 30s, up to 1 hour)
-        for _ in range(120):  # 120 * 30s = 1 hour
-            await asyncio.sleep(30)
-            try:
-                async with aiohttp.ClientSession() as session:
-                    url = f"{NOWPAYMENTS_API_BASE}/v1/invoice/{invoice_id}"
-                    headers = {"x-api-key": NOWPAYMENTS_API_KEY}
-                    async with session.get(url, headers=headers) as resp:
-                        data = await resp.json()
-                        status = data.get("payment_status", "").lower()
-                        if status in ("finished", "confirmed", "paid"):
-                            # Payment confirmed, issue key
-                            key = await issue_key(plan)
-                            user = bot.get_user(user_id) or await bot.fetch_user(user_id)
-                            try:
-                                await user.send(
-                                    f"✅ Payment confirmed for **{plan}**.\nYour key:\n```\n{key}\n```\nUse /activatekey in the server to activate."
-                                )
-                            except Exception:
-                                pass
-                            print(f"Key sent to user {user_id} for plan {plan}")
-                            return
-            except Exception as e:
-                print(f"Polling error: {e}")
-        print(f"Payment for invoice {invoice_id} not confirmed in time.")
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="help", description="Show all public commands and what they do")
-async def help_command(interaction: discord.Interaction):
-    public_commands = [
-        ("/help", "Show all public commands and what they do"),
-        ("/activate", "Activate a key and get the user role"),
-        ("/info", "Get detailed information about a key you own"),
-        ("/status", "Show bot status and statistics"),
-        ("/leaderboard", "Show the top users by key usage"),
-        ("/syncduration", "Sync your key duration with SelfBot"),
-    ]
-    embed = discord.Embed(
-        title="🤖 Public Commands",
-        description="Here are the commands anyone can use:",
-        color=0x5865F2
-    )
-    for name, desc in public_commands:
-        embed.add_field(name=name, value=desc, inline=False)
-    await _message(embed=embed, ephemeral=True)
-
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-@bot.tree.command(name="autobuy", description="Buy a key via crypto (NOWPayments)")
-async def autobuy(interaction: discord.Interaction):
-    if not _np_client:
-        return await interaction.response.send_message("Payments unavailable right now.", ephemeral=True)
-    view = AutoBuyView(interaction.user.id)
-    await interaction.response.send_message("Select a plan:", view=view, ephemeral=True)
-
-async def upload_backup_snapshot(payload: dict) -> None:
-    """Upload a JSON snapshot to the configured Discord backup channel and webhook."""
-    # Send to channel as file attachment, if configured
-    try:
-        if BACKUP_CHANNEL_ID > 0:
-            channel = bot.get_channel(BACKUP_CHANNEL_ID)
-            if channel:
-                data = json.dumps(payload, indent=2).encode()
-                file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
-                await channel.send(content="🔄 Automatic backup after key operation", file=file)
-                print(f"✅ Backup uploaded to channel {BACKUP_CHANNEL_ID}")
-            else:
-                print(f"⚠️ Backup channel {BACKUP_CHANNEL_ID} not found")
-        else:
-            print("⚠️ No backup channel configured")
-    except Exception as e:
-        print(f"❌ Backup to channel failed: {e}")
-    # Send to webhook as JSON payload, if provided
-    try:
-        url = (BACKUP_WEBHOOK_URL or '').strip()
-        if url:
-            data = json.dumps(payload, indent=2).encode()
-            files = {"file": (f"backup_{int(time.time())}.json", io.BytesIO(data), "application/json")}
-            requests.post(url, files=files, timeout=15)
-            print("✅ Backup sent to webhook")
-    except Exception as e:
-        print(f"❌ Backup to webhook failed: {e}")
 
 # Run the bot
 if __name__ == "__main__":
     print("🚀 Starting Discord Bot...")
     print("=" * 40)
-
+    
     # Start health check server in a separate thread
     health_thread = threading.Thread(target=start_health_check, daemon=True)
     health_thread.start()
@@ -3544,7 +3531,86 @@ async def purge_global_commands():
     except Exception as e:
         print(f"⚠️ Failed to purge global commands: {e}")
 
-# --- ADD LEADERBOARD COMMAND BELOW ---
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="keylogs", description="Show recent key logs (last 15)")
+async def keylogs(interaction: discord.Interaction):
+    if not await check_permissions(interaction):
+        return
+    logs = list(reversed(key_manager.key_logs[-15:]))
+    if not logs:
+        await interaction.response.send_message("📭 No logs yet.", ephemeral=True)
+        return
+    lines = []
+    for e in logs:
+        when = f"<t:{e.get('ts',0)}:R>"
+        event = e.get('event','?')
+        key = e.get('key','')
+        uid = e.get('user_id')
+        lines.append(f"{when} — {event.upper()} — `{key}` — {('<@'+str(uid)+'>') if uid else ''}")
+    embed = discord.Embed(title="📝 Recent Key Logs", description="\n".join(lines), color=0x8b5cf6)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="leaderboard", description="Show top 5 users with most selfbot messages sent")
+async def leaderboard(interaction: discord.Interaction):
+    """Show the top 5 users with most selfbot messages sent"""
+    try:
+        await interaction.response.defer()
+
+        # Load message stats from file and memory
+        stats: dict[str, int] = {}
+        try:
+            if os.path.exists(STATS_FILE):
+                async with aiofiles.open(STATS_FILE, 'r') as f:
+                    raw = await f.read()
+                import json as _json
+                stats = _json.loads(raw) or {}
+            else:
+                stats = MESSAGE_STATS.copy()
+        except Exception:
+            stats = MESSAGE_STATS.copy()
+
+        # Merge with in-memory stats to get most current data
+        for uid, count in MESSAGE_STATS.items():
+            stats[uid] = max(stats.get(uid, 0), count)
+
+        # Get top 5 users
+        top_users = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        if not top_users:
+            await interaction.followup.send("📊 No message statistics available yet.")
+            return
+
+        # Create leaderboard embed
+        embed = discord.Embed(
+            title="🏆 Selfbot Message Leaderboard",
+            description="Top 5 users with most messages sent through selfbot",
+            color=0x5a3e99
+        )
+
+        rank_emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+
+        for i, (user_id, message_count) in enumerate(top_users):
+            try:
+                user = await bot.fetch_user(int(user_id))
+                username = user.display_name if user else f"User {user_id}"
+            except Exception:
+                username = f"User {user_id}"
+
+            embed.add_field(
+                name=f"{rank_emojis[i]} #{i+1}",
+                value=f"**{username}**\n📨 {message_count:,} messages",
+                inline=True
+            )
+
+        embed.set_footer(text="Statistics persist even after key expiration")
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        try:
+            await interaction.followup.send(f"❌ Error loading leaderboard: {str(e)}")
+        except:
+            await interaction.response.send_message(f"❌ Error loading leaderboard: {str(e)}", ephemeral=True)
 
 @tasks.loop(seconds=60)
 async def reconcile_roles_task():
@@ -3607,3 +3673,422 @@ async def periodic_backup_task():
         await upload_backup_snapshot(payload)
     except Exception:
         pass
+
+# Key type selection view
+class KeyTypeSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Day Key", description="1 day access - $3", emoji="📅", value="daily"),
+            discord.SelectOption(label="Week Key", description="7 days access - $10", emoji="📆", value="weekly"),
+            discord.SelectOption(label="Month Key", description="30 days access - $20", emoji="🗓️", value="monthly"),
+            discord.SelectOption(label="Lifetime Key", description="365 days access - $50", emoji="♾️", value="lifetime")
+        ]
+        super().__init__(placeholder="Choose the key type you want to purchase...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_key_type = self.values[0]
+        await interaction.response.edit_message(view=self.view.get_crypto_view())
+
+# Crypto selection view
+class CryptoSelect(discord.ui.Select):
+    def __init__(self, key_type: str):
+        self.key_type = key_type
+        price_map = {"daily": 3, "weekly": 10, "monthly": 20, "lifetime": 50}
+        price = price_map[key_type]
+
+        options = [
+            discord.SelectOption(label="USDT", description=f"Pay ${price} with Tether", emoji="💰", value="USDT"),
+            discord.SelectOption(label="USDC", description=f"Pay ${price} with USD Coin", emoji="💵", value="USDC"),
+            discord.SelectOption(label="BTC", description=f"Pay ${price} with Bitcoin", emoji="₿", value="BTC"),
+            discord.SelectOption(label="LTC", description=f"Pay ${price} with Litecoin", emoji="Ł", value="LTC"),
+            discord.SelectOption(label="ETH", description=f"Pay ${price} with Ethereum", emoji="Ξ", value="ETH")
+        ]
+        super().__init__(placeholder="Choose your payment method...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.create_invoice(interaction, self.values[0], self.key_type)
+
+# Main autobuy view
+class AutobuyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.selected_key_type = None
+        self.add_item(KeyTypeSelect())
+
+    def get_crypto_view(self):
+        # Create new view with crypto selection
+        new_view = discord.ui.View(timeout=300)
+        new_view.selected_key_type = self.selected_key_type
+        new_view.create_invoice = self.create_invoice
+        new_view.add_item(CryptoSelect(self.selected_key_type))
+
+        # Add back button
+        back_button = discord.ui.Button(label="← Back to Key Selection", style=discord.ButtonStyle.secondary)
+        async def back_callback(button_interaction):
+            original_view = AutobuyView()
+            await button_interaction.response.edit_message(view=original_view)
+        back_button.callback = back_callback
+        new_view.add_item(back_button)
+
+        return new_view
+
+    async def create_invoice(self, interaction: discord.Interaction, coin: str, key_type: str):
+        try:
+            if not NWP_API_KEY or not NWP_IPN_SECRET:
+                await interaction.response.edit_message(content="❌ Payment processor not configured.", view=None)
+                return
+
+            price_map = {"daily": 3, "weekly": 10, "monthly": 20, "lifetime": 50}
+            amount = price_map[key_type]
+
+            order_id = f"{interaction.user.id}:{interaction.channel.id}:{key_type}:${amount}:{int(time.time())}"
+            payload = {
+                "price_amount": amount,
+                "price_currency": "USD",
+                "order_id": order_id,
+                "order_description": f"{key_type} key for {interaction.user.display_name}",
+                "pay_currency": coin,
+                "is_fixed_rate": True,
+            }
+            if PUBLIC_URL:
+                payload["ipn_callback_url"] = f"{PUBLIC_URL.rstrip('/')}/webhook/nowpayments"
+
+            headers = {"x-api-key": NWP_API_KEY, "Content-Type": "application/json"}
+            import requests as _req, json as _json
+
+            await interaction.response.defer()
+
+            try:
+                r = _req.post("https://api.nowpayments.io/v1/invoice", headers=headers, data=_json.dumps(payload), timeout=15)
+                if r.status_code not in (200, 201):
+                    await interaction.followup.edit_message(content=f"❌ Failed to create invoice (HTTP {r.status_code}).", view=None)
+                    return
+                inv = r.json()
+            except Exception as e:
+                await interaction.followup.edit_message(content=f"❌ Error creating invoice: {e}", view=None)
+                return
+
+            url = inv.get("invoice_url") or inv.get("pay_url")
+            if not url:
+                await interaction.followup.edit_message(content="❌ Invoice created but no URL returned.", view=None)
+                return
+
+            # Create payment embed
+            key_names = {"daily": "Day Key", "weekly": "Week Key", "monthly": "Month Key", "lifetime": "Lifetime Key"}
+            embed = discord.Embed(
+                title="💳 Payment Invoice Created",
+                description=f"**Product:** {key_names[key_type]}\n**Price:** ${amount} USD\n**Payment:** {coin}",
+                color=0x00ff00
+            )
+            embed.add_field(name="🔗 Payment Link", value=f"[Click here to pay]({url})", inline=False)
+            embed.add_field(name="⏱️ Processing Time", value="Payment confirmation: 3-20 minutes", inline=False)
+            embed.add_field(name="🔑 Key Delivery", value="Your key will be sent automatically after payment confirmation", inline=False)
+            embed.set_footer(text=f"Order ID: {order_id}")
+
+            await interaction.followup.edit_message(content=None, embed=embed, view=None)
+
+        except Exception as e:
+            try:
+                await interaction.followup.edit_message(content=f"❌ Error: {e}", view=None)
+            except:
+                await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="autobuy", description="Purchase a key with cryptocurrency")
+async def autobuy(interaction: discord.Interaction):
+    """Interactive key purchase system with dropdown menus"""
+    try:
+        # Check if command is used in the correct channel
+        if interaction.channel.id != 1410190267264401550:
+            await interaction.response.send_message(f"❌ This command can only be used in <#1410190267264401550>.", ephemeral=True)
+            return
+
+        if not interaction.guild or interaction.guild.id != GUILD_ID:
+            await interaction.response.send_message("❌ This command can only be used in the configured server.", ephemeral=True)
+            return
+
+        if not NWP_API_KEY or not NWP_IPN_SECRET:
+            await interaction.response.send_message("❌ Payment processor not configured.", ephemeral=True)
+            return
+
+        # Create initial embed
+        embed = discord.Embed(
+            title="🛒 Key Purchase System",
+            description="Select the type of key you want to purchase:",
+            color=0x5a3e99
+        )
+        embed.add_field(name="📅 Day Key", value="$3 - 1 day access", inline=True)
+        embed.add_field(name="📆 Week Key", value="$10 - 7 days access", inline=True)
+        embed.add_field(name="🗓️ Month Key", value="$20 - 30 days access", inline=True)
+        embed.add_field(name="♾️ Lifetime Key", value="$50 - 365 days access", inline=True)
+        embed.set_footer(text="Choose your key type below")
+
+        view = AutobuyView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="listcommands", description="List registered application commands (debug)")
+async def listcommands(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=True)
+        cmds = bot.tree.get_commands(guild=discord.Object(id=GUILD_ID))
+        names = [c.name for c in cmds]
+        await interaction.followup.send("\n".join(names) or "(no commands)")
+    except Exception as e:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"Error: {e}")
+        else:
+            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+
+async def nowpayments_webhook(request: web.Request):
+    try:
+        secret = NWP_IPN_SECRET or ''
+        body_txt = await request.text()
+        sig = request.headers.get('x-nowpayments-sig','')
+        import hmac, hashlib
+        expected = hmac.new(secret.encode(), body_txt.encode() if isinstance(body_txt, str) else body_txt, hashlib.sha512).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return web.Response(status=400, text='bad sig')
+        data = json.loads(body_txt)
+        status = str(data.get('payment_status','')).lower()
+        order_id = str(data.get('order_id',''))
+        # order_id format: user:channel:key:amount
+        parts = order_id.split(':') if order_id else []
+        user_id = parts[0] if len(parts) > 0 else None
+        ticket_channel_id = parts[1] if len(parts) > 1 else None
+        key_type = parts[2] if len(parts) > 2 else ''
+        amount = parts[3] if len(parts) > 3 else ''
+        # Log pending/confirmed
+        try:
+            if PURCHASE_LOG_WEBHOOK:
+                color = 0xF59E0B if ('pending' in status or 'waiting' in status or 'confirming' in status) else 0x22C55E if ('finished' in status or 'confirmed' in status) else 0x64748B
+                embed = {
+                    'title': 'Autobuy (NOWPayments)',
+                    'description': status,
+                    'color': color,
+                    'fields': [
+                        {'name':'User ID','value': str(user_id) if user_id else 'unknown','inline': True},
+                        {'name':'Key','value': key_type or '','inline': True},
+                        {'name':'Amount','value': amount or '','inline': True},
+                    ]
+                }
+                requests.post(PURCHASE_LOG_WEBHOOK, json={'embeds':[embed]}, timeout=6)
+        except Exception:
+            pass
+        # On finished/confirmed
+        if user_id and key_type and (('finished' in status) or ('confirmed' in status)):
+            try:
+                durations = {'daily':1, 'weekly':7, 'monthly':30, 'lifetime':365}
+                duration_days = durations.get(key_type, 30)
+                key = key_manager.generate_key(int(user_id), None, duration_days)
+                guild = bot.get_guild(GUILD_ID)
+                if guild and ticket_channel_id:
+                    try:
+                        chan = guild.get_channel(int(ticket_channel_id))
+                        if chan:
+                            member = guild.get_member(int(user_id))
+                            if member:
+                                try:
+                                    await chan.set_permissions(member, read_messages=True, send_messages=True)
+                                except Exception:
+                                    pass
+                            await chan.send(f"<@{user_id}> Your {key_type} key: `{key}`")
+                    except Exception:
+                        pass
+                try:
+                    ch = bot.get_channel(1402647285145538630)
+                    if ch:
+                        await ch.send(f"<@{user_id}> ({user_id}) Has bought {key_type} key for {amount}")
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        return web.Response(text='ok')
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
+
+
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="backupchannel", description="Set the channel to auto-backup keys and auto-restore on deploy")
+async def set_backup_channel_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
+    try:
+        global BACKUP_CHANNEL_ID
+        BACKUP_CHANNEL_ID = int(channel.id)
+        CONFIG['BACKUP_CHANNEL_ID'] = BACKUP_CHANNEL_ID
+        save_config()
+        await interaction.response.send_message(f"✅ Backup channel set to {channel.mention}.", ephemeral=True)
+        # Ensure backup loop is running
+        try:
+            if not periodic_backup_task.is_running():
+                periodic_backup_task.start()
+        except Exception:
+            pass
+        # Optional immediate backup
+        try:
+            payload = key_manager.build_backup_payload()
+            data = json.dumps(payload, indent=2).encode()
+            file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
+            await channel.send(content="Manual backup after setting channel", file=file)
+        except Exception:
+            pass
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to set backup channel: {e}", ephemeral=True)
+
+# ---------------------- TEXT COMMAND FALLBACKS ----------------------
+
+@bot.command(name="autobuy")
+async def autobuy_text(ctx: commands.Context, coin: str = None, key_type: str = None):
+    try:
+        if not ctx.guild or ctx.guild.id != GUILD_ID:
+            return
+        if not coin or not key_type:
+            await ctx.reply("Usage: !autobuy <BTC|LTC|ETH|USDC|USDT> <daily|weekly|monthly|lifetime>")
+            return
+        if not NWP_API_KEY or not NWP_IPN_SECRET:
+            await ctx.reply("Payment processor not configured.")
+            return
+        coin = coin.upper()
+        if coin not in ("BTC","LTC","ETH","USDC","USDT"):
+            await ctx.reply("Unsupported coin. Choose BTC, LTC, ETH, USDC or USDT.")
+            return
+        key_type = key_type.lower()
+        price_map = {"daily":3, "weekly":10, "monthly":20, "lifetime":50}
+        if key_type not in price_map:
+            await ctx.reply("Invalid key type. Choose daily, weekly, monthly or lifetime.")
+            return
+        amount = price_map[key_type]
+        order_id = f"{ctx.author.id}:{ctx.channel.id}:{key_type}:${amount}"
+        payload = {
+            "price_amount": amount,
+            "price_currency": "USD",
+            "order_id": order_id,
+            "order_description": f"{key_type} key for {ctx.author.id}",
+            "pay_currency": coin,
+            "is_fixed_rate": True,
+        }
+        if PUBLIC_URL:
+            payload["ipn_callback_url"] = f"{PUBLIC_URL.rstrip('/')}/webhook/nowpayments"
+        headers = {"x-api-key": NWP_API_KEY, "Content-Type": "application/json"}
+        import requests as _req, json as _json
+        try:
+            r = _req.post("https://api.nowpayments.io/v1/invoice", headers=headers, data=_json.dumps(payload), timeout=15)
+            if r.status_code not in (200,201):
+                await ctx.reply(f"Failed to create invoice (HTTP {r.status_code}).")
+                return
+            inv = r.json()
+        except Exception as e:
+            await ctx.reply(f"Error creating invoice: {e}")
+            return
+        url = inv.get("invoice_url") or inv.get("pay_url") or inv.get("invoice_url")
+        if not url:
+            await ctx.reply("Invoice created but no URL returned.")
+            return
+        note = "autobuy confirmation times vary, defaulting from 3-6 minutes up to 20 minutes"
+        em = discord.Embed(title="Autobuy", description=f"Pay with {coin} for a {key_type} key ($ {amount}).\n\n{note}", color=0x7d5fff)
+        em.add_field(name="Checkout", value=f"[Open Invoice]({url})", inline=False)
+        await ctx.reply(embed=em)
+    except Exception as e:
+        await ctx.reply(f"Error: {e}")
+
+        return
+
+async def upload_backup_snapshot(payload: dict) -> None:
+    """Upload a JSON snapshot to the configured Discord backup channel and webhook."""
+    # Send to channel as file attachment, if configured
+    try:
+        if BACKUP_CHANNEL_ID > 0:
+            channel = bot.get_channel(BACKUP_CHANNEL_ID)
+            if channel:
+                data = json.dumps(payload, indent=2).encode()
+                file = discord.File(io.BytesIO(data), filename=f"backup_{int(time.time())}.json")
+                await channel.send(content="🔄 Automatic backup after key operation", file=file)
+                print(f"✅ Backup uploaded to channel {BACKUP_CHANNEL_ID}")
+            else:
+                print(f"⚠️ Backup channel {BACKUP_CHANNEL_ID} not found")
+        else:
+            print("⚠️ No backup channel configured")
+    except Exception as e:
+        print(f"❌ Backup to channel failed: {e}")
+    # Send to webhook as JSON payload, if provided
+    try:
+        url = (BACKUP_WEBHOOK_URL or '').strip()
+        if url:
+            data = json.dumps(payload, indent=2).encode()
+            files = {"file": (f"backup_{int(time.time())}.json", io.BytesIO(data), "application/json")}
+            requests.post(url, files=files, timeout=15)
+            print("✅ Backup sent to webhook")
+    except Exception as e:
+        print(f"❌ Backup to webhook failed: {e}")
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+@bot.tree.command(name="swapkey", description="Swap a key from one user to another (Special Admin Only)")
+async def swap_key(interaction: discord.Interaction, from_user: discord.Member, to_user: discord.Member, key: str):
+	# Special admin only
+	if interaction.user.id not in SPECIAL_ADMIN_IDS:
+		await interaction.response.send_message("❌ **Access Denied:** Only special admins can use this command.", ephemeral=True)
+		return
+	if not await check_permissions(interaction):
+		return
+	try:
+		k = key.strip()
+		info = key_manager.get_key_info(k)
+		if not info:
+			await interaction.response.send_message("❌ Key not found.", ephemeral=True)
+			return
+		if int(info.get('user_id', 0) or 0) != int(from_user.id):
+			await interaction.response.send_message("❌ This key is not owned by the from_user.", ephemeral=True)
+			return
+		if not info.get('is_active', False):
+			await interaction.response.send_message("❌ Key is not active.", ephemeral=True)
+			return
+		now = int(time.time())
+		exp = int(info.get('expiration_time') or 0)
+		if exp and exp <= now:
+			await interaction.response.send_message("❌ Key is expired.", ephemeral=True)
+			return
+		# Transfer ownership and reset binding so new user can activate/bind
+		key_manager.keys[k]['user_id'] = int(to_user.id)
+		key_manager.keys[k]['activated_by'] = int(to_user.id)
+		key_manager.keys[k]['machine_id'] = None
+		key_manager.keys[k]['activation_time'] = None
+		# Persist and log
+		key_manager.save_data()
+		try:
+			key_manager.add_log('swapkey', k, user_id=int(to_user.id), details={'from_user': int(from_user.id)})
+		except Exception:
+			pass
+		# Upload immediate backup
+		try:
+			payload = key_manager.build_backup_payload()
+			await upload_backup_snapshot(payload)
+		except Exception:
+			pass
+		# Adjust roles: remove from old user, add to new user
+		try:
+			guild = interaction.guild
+			role = guild.get_role(ROLE_ID) if guild else None
+			if guild and role:
+				oldm = guild.get_member(int(from_user.id))
+				newm = guild.get_member(int(to_user.id))
+				if oldm and role in oldm.roles:
+					await oldm.remove_roles(role, reason="Key swapped to another user")
+				if newm and role not in newm.roles:
+					await newm.add_roles(role, reason="Key received via swap")
+		except Exception:
+			pass
+		# Report remaining time
+		rem = 0
+		try:
+			exp = int(info.get('expiration_time') or 0)
+			rem = max(0, exp - int(time.time()))
+		except Exception:
+			rem = 0
+		d = rem // 86400; h = (rem % 86400)//3600; m = (rem % 3600)//60
+		await interaction.response.send_message(f"✅ Swapped key `{k}` to {to_user.mention}. Remaining: {d}d {h}h {m}m. The new user must activate to bind a machine.")
+	except Exception as e:
+		await interaction.response.send_message(f"❌ Swap failed: {e}", ephemeral=True) 
+
