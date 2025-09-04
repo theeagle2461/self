@@ -7,31 +7,6 @@ except Exception:  # pragma: no cover
     except Exception:
         pass
 
-# Fallback methods (for local development only)
-        try:
-            raw = base64.urlsafe_b64decode(token.encode()).decode()
-            if '.' not in raw:
-                return None
-            payload, sig = raw.rsplit('.', 1)
-            if _sign_payload(payload) != sig:
-                return None
-            data = _json.loads(payload)
-            if int(data.get('exp', 0)) < int(time.time()):
-                return None
-            return data
-        except Exception:
-            return None
-
-if not BOT_TOKEN:
-        cookies = {}
-        if not header:
-            return cookies
-        parts = [p.strip() for p in header.split(';') if p.strip()]
-        for p in parts:
-            if '=' in p:
-                k, v = p.split('=', 1)
-                cookies[k.strip()] = v.strip()
-        return cookies
 
     # Try to load from .env file
         now_ts = int(time.time())
