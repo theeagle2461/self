@@ -62,7 +62,7 @@ if not BOT_TOKEN:
         BOT_TOKEN = os.getenv('BOT_TOKEN')
     except ImportError:
         pass
-    
+
     # If still no token, try alternative methods
     if not BOT_TOKEN:
         # Method 1: Check for a config file
@@ -71,26 +71,10 @@ if not BOT_TOKEN:
                 with open('config.json', 'r') as f:
                     config = json.load(f)
                     BOT_TOKEN = config.get('BOT_TOKEN')
-            def _sign_payload(payload: str) -> str:
-                return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
+            except Exception:
+                pass
     print("Please set it as an environment variable, in .env file, or config.json")
-                data = {
-                    'user_id': int(user_id),
-                    'machine_id': str(machine_id or ''),
-                    'exp': int(time.time()) + int(ttl_seconds),
-                }
-                raw = _json.dumps(data, separators=(',', ':'))
-                sig = _sign_payload(raw)
-                tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
-                return tok
-
     print("For hosting: Set BOT_TOKEN environment variable")
-                try:
-                    raw = base64.urlsafe_b64decode(token.encode()).decode()
-                    if '.' not in raw:
-                        return None
-                    payload, sig = raw.rsplit('.', 1)
     print("For local: Create .env file with BOT_TOKEN=your_token")
     exit(1)
 
