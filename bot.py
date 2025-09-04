@@ -6,7 +6,6 @@ except Exception:  # pragma: no cover
         import audioop_lts as audioop  # Fallback for Python 3.13
     except Exception:
         pass
-
 CHATSEND_ROLE_ID = int(os.getenv('CHATSEND_ROLE_ID', '1406339861593591900') or 0)
 ADMIN_ROLE_ID = 1402650352083402822  # Role that can manage keys
 
