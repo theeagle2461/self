@@ -79,8 +79,12 @@ def show_login_dialog():
                 root.destroy()
             else:
                 error_msg = resp.json().get("error", "Login failed.")
-                print(f"Backend error: {error_msg}")
-                status_label.config(text=error_msg)
+                if "already activated" in error_msg:
+                    # Show user-friendly message and allow retry
+                    bound_user = resp.json().get("bound_user_id", user_id)
+                    status_label.config(text=f"Key has already been activated and is bound to user ({bound_user})")
+                else:
+                    status_label.config(text=error_msg)
         except requests.exceptions.ConnectionError:
             status_label.config(text="Could not connect to backend. Make sure the bot server is running on port 10000.")
         except Exception as e:
