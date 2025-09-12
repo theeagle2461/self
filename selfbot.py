@@ -78,7 +78,9 @@ def show_login_dialog():
                 save_login_info({"key": key, "token": token, "user_id": user_id, "machine_id": machine_id})
                 root.destroy()
             else:
-                status_label.config(text=resp.json().get("error", "Login failed."))
+                error_msg = resp.json().get("error", "Login failed.")
+                print(f"Backend error: {error_msg}")
+                status_label.config(text=error_msg)
         except requests.exceptions.ConnectionError:
             status_label.config(text="Could not connect to backend. Make sure the bot server is running on port 10000.")
         except Exception as e:
