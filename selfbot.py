@@ -71,7 +71,7 @@ def show_login_dialog():
         # Call backend API to validate (replace URL with your backend endpoint)
         try:
             resp = requests.post(
-                os.getenv("SELF_API_URL", "http://localhost:8080/api/activate"),
+                os.getenv("SELF_API_URL", "http://localhost:10000/api/activate"),
                 data={"key": key, "user_id": user_id, "machine_id": machine_id}
             )
             if resp.status_code == 200 and resp.json().get("success"):
