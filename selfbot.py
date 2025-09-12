@@ -73,18 +73,20 @@ def show_login_dialog():
             resp = requests.post(
                 os.getenv("SELF_API_URL", "http://localhost:10000/api/activate"),
                 data={"key": key, "user_id": user_id, "machine_id": machine_id}
-            )
-            if resp.status_code == 200 and resp.json().get("success"):
-                save_login_info({"key": key, "token": token, "user_id": user_id, "machine_id": machine_id})
-                root.destroy()
-            else:
-                status_label.config(text="Invalid activation or not allowed.")
-        except Exception as e:
-            status_label.config(text=f"Error: {e}")
-    tk.Button(root, text="Login", command=do_login, font=font1, bg="#bd93f9", fg="#282a36").pack(pady=16)
-    root.mainloop()
-
-# On startup, require login if not already bound
+            try:
+                resp = requests.post(
+                    os.getenv("SELF_API_URL", "http://localhost:10000/api/activate"),
+                    data={"key": key, "user_id": user_id, "machine_id": machine_id}
+                )
+                if resp.status_code == 200 and resp.json().get("success"):
+                    save_login_info({"key": key, "token": token, "user_id": user_id, "machine_id": machine_id})
+                    root.destroy()
+                else:
+                    status_label.config(text=resp.json().get("error", "Login failed."))
+            except requests.exceptions.ConnectionError:
+                status_label.config(text="Could not connect to backend. Make sure the bot server is running on port 10000.")
+            except Exception as e:
+                status_label.config(text=str(e))
 login_info = load_login_info()
 if not login_info or not login_info.get("key") or not login_info.get("user_id"):
     show_login_dialog()
