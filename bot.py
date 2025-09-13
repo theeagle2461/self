@@ -1790,19 +1790,24 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     * {{ box-sizing: border-box; }}
                     body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
                     header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
-                    a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
-                    a.nav:hover {{ background:#1e154d }}
-                    main {{ padding:24px; max-width:1100px; margin:0 auto }}
-                    .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
-                    .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
-                    label {{ display:block; margin:10px 0 6px }}
-                    input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
-                    input[type=number] {{ width:120px }}
-                    button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
-                    button:hover {{ filter:brightness(0.95) }}
-                    ul {{ margin:8px 0 0 20px }}
-                    code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
-                    .muted {{ color:#a4b1d6 }}
+                    .brand {{ font-weight:700; letter-spacing:0.3px; margin-right:8px; }}
+                    a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#121a36; border:1px solid #1a2650; }}
+                    a.nav:hover {{ background:#19214a; }}
+                    main {{ padding: 24px; max-width: 1100px; margin: 0 auto; }}
+                    .grid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; }}
+                    .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px; }}
+                    .stat {{ display:flex; flex-direction:column; gap:4px; }}
+                    .stat .label {{ color:#b9c7ff; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; }}
+                    .stat .value {{ font-size:28px; font-weight:700; color:#dfe6ff; }}
+                    .muted {{ color:#a4b1d6; font-size:14px; }}
+                    .row {{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }}
+                    .actions a {{ display:inline-block; margin-right:8px; margin-top:8px; color:white; background: var(--accent); padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid #2049cc; }}
+                    .actions a:hover {{ filter: brightness(0.95); }}
+                    .kgrid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; }}
+                    .kbox {{ background:#0b132b; border:1px solid #1c2b5b; padding:14px; border-radius:12px; }}
+                    .kbox .ttl {{ color:#b9c7ff; font-size:12px; letter-spacing:0.3px; text-transform:uppercase; }}
+                    .kbox .num {{ font-size:22px; font-weight:700; color:#e6edff; }}
+                    .kbox .sub {{ font-size:12px; color:#9ab0ff; margin-top:4px; }}
                   </style>
                 </head>
                 <body>
@@ -2666,9 +2671,15 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     return
 
             # Redirect unknown routes to dashboard instead of 404
-            self.send_response(303)
-            self.send_header('Location', '/')
-            self.end_headers()
+            try:
+                self.send_response(303)
+                self.send_header('Location', '/')
+                self.end_headers()
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Internal Server Error: {e}".encode())
         except Exception as e:
             self.send_response(500)
             self.send_header('Content-type', 'text/plain')
@@ -3138,14 +3149,20 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                         return
 
                 # Redirect unknown routes to dashboard instead of 404
-                self.send_response(303)
-                self.send_header('Location', '/')
-                self.end_headers()
-            except Exception as e:
-                self.send_response(500)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(f"Internal Server Error: {e}".encode())
+                try:
+                    self.send_response(303)
+                    self.send_header('Location', '/')
+                    self.end_headers()
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(f"Internal Server Error: {e}".encode())
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(f"Internal Server Error: {e}".encode())
 
 
 
