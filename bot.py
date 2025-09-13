@@ -1688,1469 +1688,1404 @@ async def coinbase_webhook(request: web.Request):
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
-# Add a simple health check for Render
-import http.server
-import socketserver
-import threading
-
-def start_health_check():
-    """Start a simple HTTP server for health checks"""
-    import base64, json as _json, hmac, hashlib
-
-    def _sign_payload(payload: str) -> str:
-        return hmac.new(PANEL_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
-    def _encode_session(user_id: int, machine_id: str, ttl_seconds: int = 12*3600) -> str:
-        data = {
-            'user_id': int(user_id),
-            'machine_id': str(machine_id or ''),
-            'exp': int(time.time()) + int(ttl_seconds),
-        }
-        raw = _json.dumps(data, separators=(',', ':'))
-        sig = _sign_payload(raw)
-        tok = base64.urlsafe_b64encode((raw + '.' + sig).encode()).decode()
-        return tok
-
-    def _decode_session(token: str):
+# Move HealthCheckHandler class definition here so it is available for use below
+class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.end_headers()
+ 
+    def do_GET(self):
         try:
-            raw = base64.urlsafe_b64decode(token.encode()).decode()
-            if '.' not in raw:
-                return None
-            payload, sig = raw.rsplit('.', 1)
-            if _sign_payload(payload) != sig:
-                return None
-            data = _json.loads(payload)
-            if int(data.get('exp', 0)) < int(time.time()):
-                return None
-            return data
-        except Exception:
-            return None
+            # Session check (kept for potential future use)
+            cookies = _parse_cookies(self.headers.get('Cookie'))
+            session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
+            authed_uid = int(session.get('user_id')) if session else None
+            authed_mid = str(session.get('machine_id')) if session else None
+            authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
 
-    def _parse_cookies(header: str) -> dict:
-        cookies = {}
-        if not header:
-            return cookies
-        parts = [p.strip() for p in header.split(';') if p.strip()]
-        for p in parts:
-            if '=' in p:
-                k, v = p.split('=', 1)
-                cookies[k.strip()] = v.strip()
-        return cookies
+            # Public panel: no login gating; remove legacy commented block
 
-    def _has_active_access(uid: int, machine_id: str | None) -> bool:
-        now_ts = int(time.time())
-        bound_ok = False
-        has_active = False
-        for key, data in key_manager.keys.items():
-            if int(data.get('user_id', 0) or 0) != int(uid):
-                continue
-            exp = data.get('expiration_time') or 0
-            if not data.get('is_active', False):
-                continue
-            if exp and exp <= now_ts:
-                continue
-            has_active = True
-            if machine_id and data.get('machine_id') and str(data.get('machine_id')) == str(machine_id):
-                bound_ok = True
-        return bound_ok if machine_id else has_active
+            if self.path.startswith('/login'):
+                # Redirect away from legacy login to the dashboard (no login used)
+                self.send_response(303)
+                self.send_header('Location', '/')
+                self.end_headers()
+                return
 
-    class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
-        def do_HEAD(self):
+            if self.path == '/logout':
+                self.send_response(303)
+                self.send_header('Set-Cookie', 'panel_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0')
+                self.send_header('Location', '/login')
+                self.end_headers()
+                return
+
+            if self.path == '/sender':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                page = f"""
+                <html><head><title>Message Sender</title>
+                  <style>
+                    body{{font-family:Inter,Arial,sans-serif;background:#0b1020;color:#e6e9f0;margin:0}}
+                    header{{background:#0e1630;border-bottom:1px solid #1f2a4a;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+                    main{{padding:24px;max-width:720px;margin:0 auto}}
+                    .card{{background:#0e1630;border:1px solid #1f2a4a;border-radius:12px;padding:20px}}
+                    label{{display:block;margin:10px 0 6px}}
+                    input,textarea,button{{padding:10px 12px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#e6e9f0;width:100%}}
+                    textarea{{min-height:140px;resize:vertical}}
+                    button{{cursor:pointer;background:#2a5bff;border-color:#2a5bff;width:auto}}
+                    button:hover{{background:#2248cc}}
+                    a.nav{{color:#9ab0ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#121a36}}
+                    a.nav:hover{{background:#1a2448}}
+                  </style>
+                </head>
+                <body>
+                  <header>
+                    <a class='nav' href='/'>Dashboard</a>
+                    <a class='nav' href='/keys'>Keys</a>
+                    <a class='nav' href='/my'>My Keys</a>
+                    <a class='nav' href='/sender'>Sender</a>
+                    <a class='nav' href='/logout'>Logout</a>
+                  </header>
+                  <main>
+                    <div class='card'>
+                      <h2>Send a Message</h2>
+                      <form method='POST' action='/sender'>
+                        <label>Channel ID</label>
+                        <input type='text' name='channel_id' placeholder='Target channel ID' required />
+                        <label>Message</label>
+                        <textarea name='content' placeholder='Type your message...' required></textarea>
+                        <div style='margin-top:12px'><button type='submit'>Send</button></div>
+                      </form>
+                      <p class='muted' style='margin-top:10px'>Messages are sent by the bot and require the bot to have permission in the channel.</p>
+                    </div>
+                  </main>
+                </body></html>
+                """
+                self.wfile.write(page.encode())
+                return
+
+            # Simple HTML form for generating keys
+            if self.path == '/generate-form':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                # Build sidebar content for last generated keys
+                lg = key_manager.last_generated or {"daily":[],"weekly":[],"monthly":[],"lifetime":[]}
+                def block(name, arr):
+                    if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
+                    lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
+                    more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr)>50 else ''
+                    return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
+                
+                form_html = f"""
+                <html><head><title>Generate Keys</title>
+                  <style>
+                    :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
+                    * {{ box-sizing: border-box; }}
+                    body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
+                    header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
+                    a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
+                    a.nav:hover {{ background:#1e154d }}
+                    main {{ padding:24px; max-width:1100px; margin:0 auto }}
+                    .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
+                    .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
+                    label {{ display:block; margin:10px 0 6px }}
+                    input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
+                    input[type=number] {{ width:120px }}
+                    button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
+                    button:hover {{ filter:brightness(0.95) }}
+                    ul {{ margin:8px 0 0 20px }}
+                    code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
+                    .muted {{ color:#a4b1d6 }}
+                  </style>
+                </head>
+                <body>
+                  <header>
+                    <div class='brand' style='font-size:22px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
+                    <a class='nav' href='/'>Dashboard</a>
+                    <a class='nav' href='/keys'>Keys</a>
+                    <a class='nav' href='/my'>My Keys</a>
+                    <a class='nav' href='/deleted'>Deleted</a>
+                    <a class='nav' href='/backup'>Backup</a>
+                    <a class='nav' href='/generate-form'>Generate</a>
+                  </header>
+                  <main>
+                    <div class='layout'>
+                      <div class='card'>
+                        <h2>Generate Keys</h2>
+                        <form method='POST' action='/generate'>
+                          <label>Daily</label><input type='number' name='daily' min='0' value='0'/>
+                          <label>Weekly</label><input type='number' name='weekly' min='0' value='0'/>
+                          <label>Monthly</label><input type='number' name='monthly' min='0' value='0'/>
+                          <label>Lifetime</label><input type='number' name='lifetime' min='0' value='0'/>
+                          <div style='margin-top:12px'>
+                            <button type='submit'>Generate</button>
+                          </div>
+                        </form>
+                      </div>
+                      <div class='card'>
+                        <div>
+                          <h3 style='display:inline'>Last Generated</h3>
+                          <form method='GET' action='/generate-form' style='display:inline'>
+                            <button class='closebtn' title='Close panel'>&times;</button>
+                          </form>
+                        </div>
+                        {block('Daily', lg.get('daily', []))}
+                        {block('Weekly', lg.get('weekly', []))}
+                        {block('Monthly', lg.get('monthly', []))}
+                        {block('Lifetime', lg.get('lifetime', []))}
+                      </div>
+                    </div>
+                  </main>
+                </body></html>
+                """
+                self.wfile.write(form_html.encode())
+                return
+
+            if self.path.startswith('/keys'):
+                # Filters
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                filter_status = (q.get('status', ['all'])[0]).lower()
+                filter_type = (q.get('type', ['all'])[0]).lower()
+
+                sel = {
+                    'status_all': 'selected' if filter_status=='all' else '',
+                    'status_active': 'selected' if filter_status=='active' else '',
+                    'status_unassigned': 'selected' if filter_status=='unassigned' else '',
+                    'status_expired': 'selected' if filter_status=='expired' else '',
+                    'status_revoked': 'selected' if filter_status=='revoked' else '',
+                    'type_all': 'selected' if filter_type=='all' else '',
+                    'type_daily': 'selected' if filter_type=='daily' else '',
+                    'type_weekly': 'selected' if filter_type=='weekly' else '',
+                    'type_monthly': 'selected' if filter_type=='monthly' else '',
+                    'type_lifetime': 'selected' if filter_type=='lifetime' else '',
+                    'type_general': 'selected' if filter_type=='general' else ''
+                }
+
+                now_ts = int(time.time())
+                rows = []
+                for key, data in key_manager.keys.items():
+                    key_type = data.get('key_type', 'general')
+                    expires = data.get('expiration_time')
+                    exp_ts = int(expires or 0)
+                    remaining = max(0, exp_ts - now_ts)
+                    is_active = data.get('is_active', False)
+                    user_id = data.get('user_id', 0)
+                    if not is_active:
+                        status = 'revoked'
+                    elif exp_ts <= now_ts:
+                        status = 'expired'
+                    elif user_id == 0:
+                        status = 'unassigned'
+                    else:
+                        status = 'active'
+                    # Apply filters
+                    if filter_status != 'all' and status != filter_status:
+                        continue
+                    if filter_type != 'all' and key_type != filter_type:
+                        continue
+                    rows.append({
+                        'key': key,
+                        'type': key_type,
+                        'status': status,
+                        'user': (f"<@{user_id}>" if user_id else 'Unassigned'),
+                        'expires': exp_ts,
+                        'remaining': remaining,
+                        'not_activated': (data.get('activation_time') is None)
+                    })
+
+                # Build HTML
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                def fmt_rem(sec:int, not_activated: bool, key_type: str) -> str:
+                    if key_type == 'lifetime':
+                        return '∞'
+                    if not_activated:
+                        return 'Not activated yet'
+                    d=sec//86400; h=(sec%86400)//3600; m=(sec%3600)//60
+                    return f"{d}d {h}h {m}m" if sec>0 else '—'
+                table_rows = []
+                for r in rows:
+                    safe_key = html.escape(r['key'])
+                    exp_cell = ('<t:'+str(r['expires'])+':R>') if r['expires'] else ('∞' if r['type']=='lifetime' else '—')
+                    table_rows.append(f"""
+                    <tr>
+                      <td><code>{safe_key}</code></td>
+                      <td>{html.escape(r['type'])}</td>
+                      <td>{html.escape(r['status'].capitalize())}</td>
+                      <td>{r['user']}</td>
+                      <td>{fmt_rem(r['remaining'], r['not_activated'], r['type'])}</td>
+                      <td>{exp_cell}</td>
+                      <td style='display:flex;gap:6px'>
+                        <form method='POST' action='/revoke' onsubmit="return confirm('Revoke this key?')">
+                          <input type='hidden' name='key' value='{safe_key}'/>
+                          <button type='submit'>Revoke</button>
+                        </form>
+                        <form method='POST' action='/delete' onsubmit="return confirm('Delete this key?')">
+                          <input type='hidden' name='key' value='{safe_key}'/>
+                          <button type='submit'>Delete</button>
+                        </form>
+                      </td>
+                    </tr>
+                    """)
+                keys_html = f"""
+                <html><head><title>Keys</title>
+                  <style>
+                    body{{font-family:Inter,Arial,sans-serif;background:#0b0718;color:#efeaff;margin:0}}
+                    header{{background:#120a2a;border-bottom:1px solid #1f1440;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+                    a.nav{{color:#b399ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#1a1240;border:1px solid #1f1440}}
+                    a.nav:hover{{background:#1e154d}}
+                    main{{padding:24px}}
+                    .card{{background:#120a2a;border:1px solid #1f1440;border-radius:12px;padding:20px}}
+                    table{{width:100%;border-collapse:collapse;margin-top:12px}}
+                    th,td{{border-bottom:1px solid #1f1440;padding:8px 10px;text-align:left}}
+                    th{{color:#b399ff}}
+                    select,input,button{{padding:8px 10px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#efeaff}}
+                    button{{cursor:pointer;background:#6c4af2;border-color:#2049cc}}
+                    button:hover{{filter:brightness(0.95)}}
+                    code{{background:#121a36;padding:2px 6px;border-radius:6px}}
+                    .filters{{display:flex;gap:8px;align-items:center}}
+                  </style>
+                </head>
+                <body>
+                  <header>
+                    <a class='nav' href='/'>Dashboard</a>
+                    <a class='nav' href='/keys'>Keys</a>
+                    <a class='nav' href='/my'>My Keys</a>
+                    <a class='nav' href='/deleted'>Deleted</a>
+                    <a class='nav' href='/generate-form'>Generate</a>
+                    <a class='nav' href='/backup'>Backup</a>
+                  </header>
+                  <main>
+                    <div class='card'>
+                      <div class='filters'>
+                        <form method='GET' action='/keys'>
+                          <label>Status</label>
+                          <select name='status'>
+                            <option {sel['status_all']} value='all'>All</option>
+                            <option {sel['status_active']} value='active'>Active</option>
+                            <option {sel['status_unassigned']} value='unassigned'>Unassigned</option>
+                            <option {sel['status_expired']} value='expired'>Expired</option>
+                            <option {sel['status_revoked']} value='revoked'>Revoked</option>
+                          </select>
+                          <label>Type</label>
+                          <select name='type'>
+                            <option {sel['type_all']} value='all'>All</option>
+                            <option {sel['type_daily']} value='daily'>Daily</option>
+                            <option {sel['type_weekly']} value='weekly'>Weekly</option>
+                            <option {sel['type_monthly']} value='monthly'>Monthly</option>
+                            <option {sel['type_lifetime']} value='lifetime'>Lifetime</option>
+                            <option {sel['type_general']} value='general'>General</option>
+                          </select>
+                          <button type='submit'>Apply</button>
+                        </form>
+                      </div>
+                      <table>
+                        <thead><tr>
+                          <th>Key</th><th>Type</th><th>Status</th><th>User</th><th>Remaining</th><th>Expires</th><th>Actions</th>
+                        </tr></thead>
+                        <tbody>
+                          {''.join(table_rows) if table_rows else '<tr><td colspan="7">No keys found</td></tr>'}
+                        </tbody>
+                      </table>
+                    </div>
+                  </main>
+                </body>
+                </html>
+                """
+                self.wfile.write(keys_html.encode())
+                return
+
+            if self.path == '/deleted':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                table_rows = []
+                for key, data in key_manager.deleted_keys.items():
+                    safe_key = html.escape(key)
+                    who = data.get('deleted_by', 'admin')
+                    when = data.get('deleted_at', data.get('activation_time', 0))
+                    table_rows.append(f"""
+                    <tr>
+                      <td><code>{safe_key}</code></td>
+                      <td>{html.escape(data.get('key_type',''))}</td>
+                      <td>{html.escape(str(who))}</td>
+                      <td><t:{when}:R></td>
+                    </tr>
+                    """)
+                html_doc = f"""
+                <html><head><title>Deleted Keys</title>
+                  <style>
+                    body{{font-family:Inter,Arial,sans-serif;background:#0b0718;color:#efeaff;margin:0}}
+                    header{{background:#120a2a;border-bottom:1px solid #1f1440;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+                    a.nav{{color:#b399ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#1a1240;border:1px solid #1f1440}}
+                    a.nav:hover{{background:#1e154d}}
+                    main{{padding:24px}}
+                    .card{{background:#0e1630;border:1px solid #1f2a4a;border-radius:12px;padding:20px}}
+                    table{{width:100%;border-collapse:collapse;margin-top:12px}}
+                    th,td{{border-bottom:1px solid #1f2a4a;padding:8px 10px;text-align:left}}
+                    th{{color:#9ab0ff}}
+                    code{{background:#121a36;padding:2px 6px;border-radius:6px}}
+                  </style>
+                </head>
+                <body>
+                  <header>
+                    <a class='nav' href='/'>Dashboard</a>
+                    <a class='nav' href='/keys'>Keys</a>
+                    <a class='nav' href='/deleted'>Deleted</a>
+                    <a class='nav' href='/generate-form'>Generate</a>
+                  </header>
+                  <main>
+                    <div class='card'>
+                      <h2>Deleted Keys</h2>
+                      <table>
+                        <thead><tr>
+                          <th>Key</th><th>Type</th><th>Deleted By</th><th>When</th>
+                        </tr></thead>
+                        <tbody>
+                          {''.join(table_rows) if table_rows else '<tr><td colspan="4">No deleted keys</td></tr>'}
+                        </tbody>
+                      </table>
+                    </div>
+                  </main>
+                </body>
+                </html>
+                """
+                self.wfile.write(html_doc.encode())
+                return
+
+            if self.path.startswith('/my'):
+                # My Keys page: enter Discord user ID to view assigned keys
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                user_q = q.get('user_id', [""])[0]
+                try:
+                    target_uid = int(user_q) if user_q else None
+                except Exception:
+                    target_uid = None
+
+                now_ts = int(time.time())
+                rows = []
+                if target_uid is not None:
+                    for key, data in key_manager.keys.items():
+                        if data.get('user_id', 0) == target_uid:
+                            expires = data.get('expiration_time')
+                            exp_ts = int(expires or 0)
+                            remaining = max(0, exp_ts - now_ts)
+                            is_active = data.get('is_active', False)
+                            status = 'revoked' if not is_active else ('expired' if exp_ts <= now_ts and exp_ts > 0 else 'active')
+                            rows.append({
+                                'key': key,
+                                'status': status,
+                                'expires': exp_ts,
+                                'remaining': remaining,
+                                'type': data.get('key_type','')
+                            })
+                def fmt_rem(sec:int, not_activated: bool) -> str:
+                    if not_activated:
+                        return 'Not activated yet'
+                    d=sec//86400; h=(sec%86400)//3600; m=(sec%3600)//60
+                    return f"{d}d {h}h {m}m" if sec>0 else '—'
+                table_rows = []
+                for r in rows:
+                    safe_key = html.escape(r['key'])
+                    table_rows.append(f"""
+                    <tr>
+                      <td><code>{safe_key}</code></td>
+                      <td>{html.escape(r['type'])}</td>
+                      <td>{html.escape(r['status'].capitalize())}</td>
+                      <td>{fmt_rem(r['remaining'], r['not_activated'], r['type'])}</td>
+                      <td>{('<t:'+str(r['expires'])+':R>') if r['expires'] else '—'}</td>
+                    </tr>
+                    """)
+                page = f"""
+                <html><head><title>My Keys</title>
+                  <style>
+                    body{{font-family:Inter,Arial,sans-serif;background:#0b0718;color:#efeaff;margin:0}}
+                    header{{background:#120a2a;border-bottom:1px solid #1f1440;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+                    a.nav{{color:#b399ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#1a1240;border:1px solid #1f1440}}
+                    a.nav:hover{{background:#1e154d}}
+                    main{{padding:24px}}
+                    .card{{background:#120a2a;border:1px solid #1f1440;border-radius:12px;padding:20px}}
+                    table{{width:100%;border-collapse:collapse;margin-top:12px}}
+                    th,td{{border-bottom:1px solid #1f1440;padding:8px 10px;text-align:left}}
+                    th{{color:#b399ff}}
+                    input,button{{padding:8px 10px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#efeaff}}
+                    button{{cursor:pointer;background:#6c4af2;border-color:#2049cc}}
+                    button:hover{{filter:brightness(0.95)}}
+                    code{{background:#121a36;padding:2px 6px;border-radius:6px}}
+                  </style>
+                </head>
+                <body>
+                  <header>
+                    <a class='nav' href='/'>Dashboard</a>
+                    <a class='nav' href='/keys'>Keys</a>
+                    <a class='nav' href='/my'>My Keys</a>
+                    <a class='nav' href='/deleted'>Deleted</a>
+                    <a class='nav' href='/generate-form'>Generate</a>
+                    <a class='nav' href='/backup'>Backup</a>
+                  </header>
+                  <main>
+                    <div class='card'>
+                      <h2>My Keys</h2>
+                      <form method='GET' action='/my'>
+                        <label>Discord User ID</label>
+                        <input type='text' name='user_id' value='{html.escape(user_q)}' placeholder='Enter your Discord user ID'/>
+                        <button type='submit'>View</button>
+                      </form>
+                      <table>
+                        <thead><tr><th>Key</th><th>Type</th><th>Status</th><th>Remaining</th><th>Expires</th></tr></thead>
+                        <tbody>
+                          {''.join(table_rows) if table_rows else ('<tr><td colspan="5">Enter your Discord user ID above to view assigned keys</td></tr>' if not user_q else '<tr><td colspan="5">No keys found for this user</td></tr>')}
+                        </tbody>
+                      </table>
+                      { (f"<p style='margin-top:12px'><a class='nav' href='/backup?user_id={html.escape(user_q)}'>Download backup for this user</a></p>" if user_q else '') }
+                    </div>
+                  </main>
+                </body>
+                </html>
+                """
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(page.encode())
+                return
+
+            if self.path.startsWith('/backup'):
+                # JSON backup; optional user_id filter
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                user_q = q.get('user_id', [None])[0]
+                payload = {}
+                if user_q:
+                    try:
+                        uid = int(user_q)
+                    except Exception:
+                        uid = None
+                    if uid is not None:
+                        subset = {}
+                        subset_usage = {}
+                        for k, data in key_manager.keys.items():
+                            if data.get('user_id', 0) == uid:
+                                subset[k] = data
+                                if k in key_manager.key_usage:
+                                    subset_usage[k] = key_manager.key_usage[k]
+                        payload = {
+                            'keys': subset,
+                            'usage': subset_usage
+                        }
+                    else:
+                        payload = {'error': 'invalid user_id'}
+                else:
+                    payload = {
+                        'keys': key_manager.keys,
+                        'usage': key_manager.key_usage,
+                        'deleted_keys': key_manager.deleted_keys
+                    }
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Disposition', 'attachment; filename="backup.json"')
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps(payload, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(payload, indent=2).encode())
+                return
+
+            if self.path.startswith('/api/member-status'):
+                # Return whether a user should have access based on active keys and optional machine binding
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                user_q = q.get('user_id', [None])[0]
+                machine_q = q.get('machine_id', [None])[0]
+                try:
+                    uid = int(user_q) if user_q is not None else None
+                except Exception:
+                    uid = None
+
+                now_ts = int(time.time())
+                active_items = []
+                expired_count = 0
+                bound_match = False
+                if uid is not None:
+                    for key, data in key_manager.keys.items():
+                        if data.get('user_id', 0) != uid:
+                            continue
+                        expires = data.get('expiration_time', 0) or 0
+                        if data.get('is_active', False) and (expires == 0 or expires > now_ts):
+                            item = {
+                                'key': key,
+                                'expires_at': expires,
+                                'time_remaining': (expires - now_ts) if expires else 0,
+                                'type': data.get('key_type', 'general'),
+                                'machine_id': data.get('machine_id')
+                            }
+                            active_items.append(item)
+                            if machine_q:
+                                mid = str(data.get('machine_id') or '')
+                                # Accept exact machine binding OR legacy slash-activation binding (machine_id == user_id)
+                                if (mid and str(machine_q) == mid) or (mid and str(uid) == mid):
+                                    bound_match = True
+                        else:
+                            if expires and expires <= now_ts:
+                                expired_count += 1
+
+                has_active_key = len(active_items) > 0
+                # Role-based access: check if user currently has the Discord role
+                has_role = False
+                try:
+                    guild = bot.get_guild(GUILD_ID)
+                    if guild and uid:
+                        member = guild.get_member(uid)
+                        if member is None:
+                            # Fallback to fetching the member if not in cache
+                            async def _fetch_member():
+                                try:
+                                    return await guild.fetch_member(uid)
+                                except Exception:
+                                    return None
+                            fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
+                            try:
+                                member = fut.result(timeout=5)
+                            except Exception:
+                                member = None
+                        if member:
+                            has_role = any((r.id == ROLE_ID) or (r.name.lower() == ROLE_NAME.lower()) for r in member.roles)
+                except Exception:
+                    has_role = False
+                # Access should depend on active key (and optional machine binding)
+                should_have_access = has_active_key and (bound_match or not machine_q)
+                resp = {
+                    'user_id': uid,
+                    'role_id': ROLE_ID,
+                    'guild_id': GUILD_ID,
+                    'has_active_key': has_active_key,
+                    'has_role': has_role,
+                    'should_have_access': should_have_access,
+                    'bound_match': bound_match,
+                    'active_keys': active_items,
+                    'expired_keys_count': expired_count,
+                    'last_updated': now_ts
+                }
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps(resp, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(resp, indent=2).encode())
+                return
+
+            if self.path.startswith('/api/ann-poll'):
+                # Owner-only announcements feed
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                since_raw = q.get('since', ['0'])[0]
+                try:
+                    since_ts = int(since_raw)
+                except Exception:
+                    since_ts = 0
+                now_ts = int(time.time())
+                try:
+                    msgs = []
+                    if os.path.exists(ANN_FILE):
+                        with open(ANN_FILE, 'r') as f:
+                            msgs = json.load(f)
+                    if not isinstance(msgs, list):
+                        msgs = []
+                except Exception:
+                    msgs = []
+                new_msgs = [m for m in msgs if int(m.get('ts', 0) or 0) > since_ts]
+                payload = { 'messages': new_msgs[-100:], 'server_time': now_ts }
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps(payload, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(payload, indent=2).encode())
+                return
+
+            if self.path.startswith('/api/chat-poll'):
+                # Long-poll style: clients poll for new chat messages
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                since_raw = q.get('since', ['0'])[0]
+                user_q = q.get('user_id', ['0'])[0]
+                try:
+                    since_ts = int(since_raw)
+                except Exception:
+                    since_ts = 0
+                try:
+                    uid = int(user_q)
+                except Exception:
+                    uid = 0
+                if not uid:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"success":false,"error":"missing user_id"}')
+                    return
+                if not uid:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"success":false,"error":"missing user_id"}')
+                    return
+                now_ts = int(time.time())
+                # Load messages
+                try:
+                    msgs = []
+                    if os.path.exists(CHAT_FILE):
+                        with open(CHAT_FILE, 'r') as f:
+                            msgs = json.load(f)
+                    if not isinstance(msgs, list):
+                        msgs = []
+                except Exception:
+                    msgs = []
+                new_msgs = [m for m in msgs if int(m.get('ts', 0) or 0) > since_ts]
+                # Determine if user can send: has role or reached threshold
+                can_send = False
+                try:
+                    guild = bot.get_guild(GUILD_ID)
+                    cnt = int(MESSAGE_STATS.get(str(uid), 0))
+                    if cnt >= MESSAGES_THRESHOLD:
+                        can_send = True
+                    elif guild and uid:
+                        member = guild.get_member(uid)
+                        if member:
+                          can_send = any(r.id == CHATSEND_ROLE_ID for r in member.roles)
+                except Exception:
+                    can_send = False
+                payload = {
+                    'messages': new_msgs[-100:],
+                    'server_time': now_ts,
+                    'can_send': can_send
+                }
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(payload, indent=2).encode())
+                return
+
+            if self.path == '/api/key-info':
+                parsed = urllib.parse.urlparse(self.path)
+                q = urllib.parse.parse_qs(parsed.query or '')
+                key = (q.get('key', [None])[0])
+                if not key:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    try:
+                        self.wfile.write(json.dumps({'error':'missing key'}).encode())
+                    except Exception:
+                        import json as _json
+                        self.wfile.write(_json.dumps({'error':'missing key'}).encode())
+                    return
+
+                info = None
+                if key in key_manager.keys:
+                    d = key_manager.keys[key]
+                    info = {
+                        'exists': True,
+                        'is_active': d.get('is_active', False),
+                        'user_id': d.get('user_id', 0),
+                        'machine_id': d.get('machine_id'),
+                        'duration_days': d.get('duration_days'),
+                        'created_time': d.get('created_time'),
+                        'activation_time': d.get('activation_time'),
+                        'expiration_time': d.get('expiration_time'),
+                        'key_type': d.get('key_type','general')
+                    }
+                else:
+                    info = {'exists': False}
+                self.send_response(200)
+                self.send_header('Content-Type','application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(info, indent=2).encode())
+                return
+
+            if self.path == '/download/selfbot.py':
+                try:
+                    sb_path = os.path.join(os.getcwd(), 'Selfbot.py')
+                    with open(sb_path, 'rb') as f:
+                        data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(f"Failed to read SelfBot.py: {e}".encode())
+                return
+
+            if self.path == '/download/bot.py':
+                try:
+                    bp_path = os.path.join(os.getcwd(), 'bot.py')
+                    with open(bp_path, 'rb') as f:
+                        data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', 'attachment; filename="bot.py"')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(f"Failed to read bot.py: {e}".encode())
+                return
+
             if self.path == '/':
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
+
+                # Get comprehensive key statistics for HTML dashboard
+                total_keys = len(key_manager.keys)
+                active_keys = sum(1 for k in key_manager.keys.values() if k["is_active"])
+                revoked_keys = total_keys - active_keys
+                deleted_keys = len(key_manager.deleted_keys)
+
+                daily_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"])
+                weekly_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"])
+                monthly_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"])
+                lifetime_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"])
+                general_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"])
+
+                available_daily = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"] and k["user_id"] == 0)
+                available_weekly = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"] and k["user_id"] == 0)
+                available_monthly = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"] and k["user_id"] == 0)
+                available_lifetime = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"] and k["user_id"] == 0)
+                available_general = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"] and k["user_id"] == 0)
+
+                response = f"""
+                <html>
+                  <head>
+                    <title>Discord Key Bot</title>
+                    <meta name='viewport' content='width=device-width, initial-scale=1'/>
+                    <style>
+                      :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
+                      * {{ box-sizing: border-box; }}
+                      body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
+                      header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; align-items:center; gap:12px; flex-wrap: wrap; }}
+                      .brand {{ font-weight:700; letter-spacing:0.3px; margin-right:8px; }}
+                      a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#121a36; border:1px solid #1a2650; }}
+                      a.nav:hover {{ background:#19214a; }}
+                      main {{ padding: 24px; max-width: 1100px; margin: 0 auto; }}
+                      .grid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; }}
+                      .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px; }}
+                      .stat {{ display:flex; flex-direction:column; gap:4px; }}
+                      .stat .label {{ color:#b9c7ff; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; }}
+                      .stat .value {{ font-size:28px; font-weight:700; color:#dfe6ff; }}
+                      .muted {{ color:#a4b1d6; font-size:14px; }}
+                      .row {{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }}
+                      .actions a {{ display:inline-block; margin-right:8px; margin-top:8px; color:white; background: var(--accent); padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid #2049cc; }}
+                      .actions a:hover {{ filter: brightness(0.95); }}
+                      .kgrid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; }}
+                      .kbox {{ background:#0b132b; border:1px solid #1c2b5b; padding:14px; border-radius:12px; }}
+                      .kbox .ttl {{ color:#b9c7ff; font-size:12px; letter-spacing:0.3px; text-transform:uppercase; }}
+                      .kbox .num {{ font-size:22px; font-weight:700; color:#e6edff; }}
+                      .kbox .sub {{ font-size:12px; color:#9ab0ff; margin-top:4px; }}
+                    </style>
+                  </head>
+                  <body>
+                    <header>
+                      <div class='brand' style='font-size:28px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
+                      <a class='nav' href='/'>Dashboard</a>
+                      <a class='nav' href='/keys'>Keys</a>
+                      <a class='nav' href='/my'>My Keys</a>
+                      <a class='nav' href='/deleted'>Deleted</a>
+                      <a class='nav' href='/generate-form'>Generate</a>
+                      <a class='nav' href='/backup'>Backup</a>
+                    </header>
+                    <main>
+                      <div class='row'>
+                        <div class='card' style='flex:2'>
+                          <div class='grid'>
+                            <div class='stat card'>
+                              <div class='label'>Total Keys</div>
+                              <div class='value'>{total_keys}</div>
+                              <div class='muted'>All keys in database</div>
+                            </div>
+                            <div class='stat card'>
+                              <div class='label'>Active</div>
+                              <div class='value'>{active_keys}</div>
+                              <div class='muted'>Currently valid</div>
+                            </div>
+                            <div class='stat card'>
+                              <div class='label'>Revoked</div>
+                              <div class='value'>{revoked_keys}</div>
+                              <div class='muted'>Access removed</div>
+                            </div>
+                            <div class='stat card'>
+                              <div class='label'>Deleted</div>
+                              <div class='value'>{deleted_keys}</div>
+                              <div class='muted'>Moved to recycle</div>
+                            </div>
+                          </div>
+                          <div class='actions'>
+                            <a href='/keys'>Manage Keys</a>
+                            <a href='/generate-form'>Generate Keys</a>
+                            <a href='/my'>My Keys</a>
+                            <a href='/backup'>Backup</a>
+                          </div>
+                        </div>
+                      </div>
+                      <div style='height:16px'></div>
+                      <div class='card'>
+                        <div class='kgrid'>
+                          <div class='kbox'>
+                            <div class='ttl'>Daily Keys</div>
+                            <div class='num'>{daily_keys}</div>
+                            <div class='sub'>Available: {available_daily}</div>
+                          </div>
+                          <div class='kbox'>
+                            <div class='ttl'>Weekly Keys</div>
+                            <div class='num'>{weekly_keys}</div>
+                            <div class='sub'>Available: {available_weekly}</div>
+                          </div>
+                          <div class='kbox'>
+                            <div class='ttl'>Monthly Keys</div>
+                            <div class='num'>{monthly_keys}</div>
+                            <div class='sub'>Available: {available_monthly}</div>
+                          </div>
+                          <div class='kbox'>
+                            <div class='ttl'>Lifetime Keys</div>
+                            <div class='num'>{lifetime_keys}</div>
+                            <div class='sub'>Available: {available_lifetime}</div>
+                          </div>
+                          <div class='kbox'>
+                            <div class='ttl'>General Keys</div>
+                            <div class='num'>{general_keys}</div>
+                            <div class='sub'>Available: {available_general}</div>
+                          </div>
+                        </div>
+                        <div class='muted' style='margin-top:10px'>
+                          Status: Online • {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')} • Bot: {bot.user.name if bot.user else 'Starting...'}
+                        </div>
+                      </div>
+                    </main>
+                  </body>
+                </html>
+                """
+                self.wfile.write(response.encode())
                 return
-            self.send_response(404)
+
+            if self.path == '/api/keys':
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+
+                keys_data = {
+                    "total_keys": len(key_manager.keys),
+                    "active_keys": sum(1 for k in key_manager.keys.values() if k["is_active"]),
+                    "revoked_keys": sum(1 for k in key_manager.keys.values() if not k["is_active"]),
+                    "deleted_keys": len(key_manager.deleted_keys),
+                    "keys_by_type": {
+                        "daily": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"]),
+                        "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"]),
+                        "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"]),
+                        "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"]),
+                        "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"])
+                    },
+                    "available_keys": {
+                        "daily": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"] and k["user_id"] == 0),
+                        "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"] and k["user_id"] == 0),
+                        "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"] and k["user_id"] == 0),
+                        "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"] and k["user_id"] == 0),
+                        "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"] and k["user_id"] == 0)
+                    },
+                    "last_updated": int(time.time())
+                }
+                try:
+                    self.wfile.write(json.dumps(keys_data, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(keys_data, indent=2).encode())
+                return
+
+            # Direct download endpoints
+            if self.path.lower() in ('/download/selfbot.py', '/download/selfbot'):
+                try:
+                    file_path = os.path.join('.', 'Selfbot.py')
+                    if not os.path.exists(file_path):
+                        self.send_response(404)
+                        self.end_headers()
+                        self.wfile.write(b'Not found')
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
+                    self.end_headers()
+                    with open(file_path, 'rb') as f:
+                        self.wfile.write(f.read())
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(f"Failed to read SelfBot.py: {e}".encode())
+                    return
+            if self.path.lower() in ('/download/bot.py', '/download/bot'):
+                try:
+                    file_path = os.path.join('.', 'bot.py')
+                    if not os.path.exists(file_path):
+                        self.send_response(404)
+                        self.end_headers()
+                        self.wfile.write(b'Not found')
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', 'attachment; filename="bot.py"')
+                    self.end_headers()
+                    with open(file_path, 'rb') as f:
+                        self.wfile.write(f.read())
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(f"Failed to read bot.py: {e}".encode())
+                    return
+
+            # Redirect unknown routes to dashboard instead of 404
+            self.send_response(303)
+            self.send_header('Location', '/')
             self.end_headers()
- 
-        def do_GET(self):
+        except Exception as e:
             try:
-                # Session check (kept for potential future use)
+                self.send_response(500)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Internal Server Error: {e}".encode())
+            except Exception:
+                pass
+
+    def do_POST(self):
+        try:
+            if self.path == '/generate':
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                def to_int(name):
+                    try:
+                        return max(0, int(data.get(name, ['0'])[0]))
+                    except Exception:
+                        return 0
+                daily = to_int('daily')
+                weekly = to_int('weekly')
+                monthly = to_int('monthly')
+                lifetime = to_int('lifetime')
+
+                result = key_manager.generate_bulk_keys(daily, weekly, monthly, lifetime)
+                key_manager.last_generated = result
+
+                self.send_response(303)
+                self.send_header('Location','/generate-form')
+                self.end_headers()
+                return
+
+            if self.path in ('/revoke','/delete'):
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                key = (data.get('key',[None])[0])
+                if not key:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'Missing key')
+                    return
+                ok = False
+                if self.path == '/revoke':
+                    ok = key_manager.revoke_key(key)
+                else:
+                    ok = key_manager.delete_key(key)
+                self.send_response(303)
+                self.send_header('Location','/keys')
+                self.end_headers()
+                return
+
+            if self.path == '/api/activate':
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                key = (data.get('key', [None])[0])
+                user_id_str = (data.get('user_id', [None])[0])
+                machine = (data.get('machine_id', [''])[0])
+                try:
+                    user_id_val = int(user_id_str) if user_id_str is not None else None
+                except Exception:
+                    user_id_val = None
+                resp = {}
+                status_code = 200
+                if not key or not user_id_val or not machine:
+                    resp = {'success': False, 'error': 'missing key, user_id, or machine_id'}
+                    status_code = 400
+                else:
+                    try:
+                        result = key_manager.activate_key(key, str(machine), int(user_id_val))
+                        resp = result
+                        if not result.get('success'):
+                            status_code = 400
+                            print(f"/api/activate failure for key={key}: {result}")
+                        else:
+                            # Grant role immediately upon successful activation
+                            try:
+                                guild = bot.get_guild(GUILD_ID)
+                                role = guild.get_role(ROLE_ID) if guild else None
+                                if not role and guild:
+                                    import discord as _discord
+                                    role = _discord.utils.find(lambda r: r.name.lower() == ROLE_NAME.lower(), guild.roles)
+                                if guild and role and user_id_val:
+                                    async def _add_role():
+                                        member = guild.get_member(int(user_id_val))
+                                        if member:
+                                            await member.add_roles(role, reason="Key activated via API")
+                                    asyncio.run_coroutine_threadsafe(_add_role(), bot.loop)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        resp = {'success': False, 'error': str(e)}
+                        status_code = 500
+                        print(f"/api/activate exception: {e}")
+                self.send_response(status_code)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps(resp, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(resp, indent=2).encode())
+                return
+
+            if self.path == '/api/rebind':
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                key = (data.get('key', [None])[0])
+                user_id_str = (data.get('user_id', [None])[0])
+                new_machine = (data.get('machine_id', [''])[0])
+                try:
+                    user_id_val = int(user_id_str) if user_id_str is not None else None
+                except Exception:
+                    user_id_val = None
+                resp = {}
+                status_code = 200
+                if not key or not user_id_val or not new_machine:
+                    resp = {'success': False, 'error': 'missing key, user_id, or machine_id'}
+                    status_code = 400
+                else:
+                    try:
+                        result = key_manager.rebind_key(key, int(user_id_val), str(new_machine))
+                        resp = result
+                        if not result.get('success'):
+                            status_code = 400
+                    except Exception as e:
+                        resp = {'success': False, 'error': str(e)}
+                        status_code = 500
+                self.send_response(status_code)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps(resp, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(resp, indent=2).encode())
+                return
+
+            if self.path == '/sender':
+                # Auth check via cookie
                 cookies = _parse_cookies(self.headers.get('Cookie'))
                 session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
                 authed_uid = int(session.get('user_id')) if session else None
                 authed_mid = str(session.get('machine_id')) if session else None
-                authed_ok = (_has_active_access(authed_uid, authed_mid) if authed_uid is not None else False)
-
-                # Public panel: no login gating; remove legacy commented block
-
-                if self.path.startswith('/login'):
-                    # Redirect away from legacy login to the dashboard (no login used)
+                if not authed_uid or not _has_active_access(authed_uid, authed_mid):
                     self.send_response(303)
-                    self.send_header('Location', '/')
-                    self.end_headers()
-                    return
-
-                if self.path == '/logout':
-                    self.send_response(303)
-                    self.send_header('Set-Cookie', 'panel_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0')
                     self.send_header('Location', '/login')
                     self.end_headers()
                     return
-
-                if self.path == '/sender':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    page = f"""
-                    <html><head><title>Message Sender</title>
-                      <style>
-                        body{{font-family:Inter,Arial,sans-serif;background:#0b1020;color:#e6e9f0;margin:0}}
-                        header{{background:#0e1630;border-bottom:1px solid #1f2a4a;padding:16px 24px;display:flex;gap:16px;align-items:center}}
-                        main{{padding:24px;max-width:720px;margin:0 auto}}
-                        .card{{background:#0e1630;border:1px solid #1f2a4a;border-radius:12px;padding:20px}}
-                        label{{display:block;margin:10px 0 6px}}
-                        input,textarea,button{{padding:10px 12px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#e6e9f0;width:100%}}
-                        textarea{{min-height:140px;resize:vertical}}
-                        button{{cursor:pointer;background:#2a5bff;border-color:#2a5bff;width:auto}}
-                        button:hover{{background:#2248cc}}
-                        a.nav{{color:#9ab0ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#121a36}}
-                        a.nav:hover{{background:#1a2448}}
-                      </style>
-                    </head>
-                    <body>
-                      <header>
-                        <a class='nav' href='/'>Dashboard</a>
-                        <a class='nav' href='/keys'>Keys</a>
-                        <a class='nav' href='/my'>My Keys</a>
-                        <a class='nav' href='/sender'>Sender</a>
-                        <a class='nav' href='/logout'>Logout</a>
-                      </header>
-                      <main>
-                        <div class='card'>
-                          <h2>Send a Message</h2>
-                          <form method='POST' action='/sender'>
-                            <label>Channel ID</label>
-                            <input type='text' name='channel_id' placeholder='Target channel ID' required />
-                            <label>Message</label>
-                            <textarea name='content' placeholder='Type your message...' required></textarea>
-                            <div style='margin-top:12px'><button type='submit'>Send</button></div>
-                          </form>
-                          <p class='muted' style='margin-top:10px'>Messages are sent by the bot and require the bot to have permission in the channel.</p>
-                        </div>
-                      </main>
-                    </body></html>
-                    """
-                    self.wfile.write(page.encode())
-                    return
-
-                # Simple HTML form for generating keys
-                if self.path == '/generate-form':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    # Build sidebar content for last generated keys
-                    lg = key_manager.last_generated or {"daily":[],"weekly":[],"monthly":[],"lifetime":[]}
-                    def block(name, arr):
-                        if not arr: return f"<p class='muted'>No {name.lower()} keys yet</p>"
-                        lis = ''.join([f"<li><code>{html.escape(k)}</code></li>" for k in arr[:50]])
-                        more = f"<p class='muted'>...and {len(arr)-50} more</p>" if len(arr)>50 else ''
-                        return f"<h4>{name}</h4><ul>{lis}</ul>{more}"
-                    
-                    form_html = f"""
-                    <html><head><title>Generate Keys</title>
-                      <style>
-                        :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
-                        * {{ box-sizing: border-box; }}
-                        body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
-                        header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; gap:12px; align-items:center }}
-                        a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#1a1240; border:1px solid #1f1440 }}
-                        a.nav:hover {{ background:#1e154d }}
-                        main {{ padding:24px; max-width:1100px; margin:0 auto }}
-                        .layout {{ display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px }}
-                        .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px }}
-                        label {{ display:block; margin:10px 0 6px }}
-                        input,button {{ padding:10px 12px; border-radius:10px; border:1px solid #2a3866; background:#0b132b; color:var(--text) }}
-                        input[type=number] {{ width:120px }}
-                        button {{ cursor:pointer; background: var(--accent); border-color:#2049cc }}
-                        button:hover {{ filter:brightness(0.95) }}
-                        ul {{ margin:8px 0 0 20px }}
-                        code {{ background:#121a36; padding:2px 6px; border-radius:6px }}
-                        .muted {{ color:#a4b1d6 }}
-                      </style>
-                    </head>
-                    <body>
-                      <header>
-                        <div class='brand' style='font-size:22px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
-                        <a class='nav' href='/'>Dashboard</a>
-                        <a class='nav' href='/keys'>Keys</a>
-                        <a class='nav' href='/my'>My Keys</a>
-                        <a class='nav' href='/deleted'>Deleted</a>
-                        <a class='nav' href='/backup'>Backup</a>
-                        <a class='nav' href='/generate-form'>Generate</a>
-                      </header>
-                      <main>
-                        <div class='layout'>
-                          <div class='card'>
-                            <h2>Generate Keys</h2>
-                            <form method='POST' action='/generate'>
-                              <label>Daily</label><input type='number' name='daily' min='0' value='0'/>
-                              <label>Weekly</label><input type='number' name='weekly' min='0' value='0'/>
-                              <label>Monthly</label><input type='number' name='monthly' min='0' value='0'/>
-                              <label>Lifetime</label><input type='number' name='lifetime' min='0' value='0'/>
-                              <div style='margin-top:12px'>
-                                <button type='submit'>Generate</button>
-                              </div>
-                            </form>
-                          </div>
-                          <div class='card'>
-                            <div>
-                              <h3 style='display:inline'>Last Generated</h3>
-                              <form method='GET' action='/generate-form' style='display:inline'>
-                                <button class='closebtn' title='Close panel'>&times;</button>
-                              </form>
-                            </div>
-                            {block('Daily', lg.get('daily', []))}
-                            {block('Weekly', lg.get('weekly', []))}
-                            {block('Monthly', lg.get('monthly', []))}
-                            {block('Lifetime', lg.get('lifetime', []))}
-                          </div>
-                        </div>
-                      </main>
-                    </body></html>
-                    """
-                    self.wfile.write(form_html.encode())
-                    return
-
-                if self.path.startswith('/keys'):
-                    # Filters
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    filter_status = (q.get('status', ['all'])[0]).lower()
-                    filter_type = (q.get('type', ['all'])[0]).lower()
-
-                    sel = {
-                        'status_all': 'selected' if filter_status=='all' else '',
-                        'status_active': 'selected' if filter_status=='active' else '',
-                        'status_unassigned': 'selected' if filter_status=='unassigned' else '',
-                        'status_expired': 'selected' if filter_status=='expired' else '',
-                        'status_revoked': 'selected' if filter_status=='revoked' else '',
-                        'type_all': 'selected' if filter_type=='all' else '',
-                        'type_daily': 'selected' if filter_type=='daily' else '',
-                        'type_weekly': 'selected' if filter_type=='weekly' else '',
-                        'type_monthly': 'selected' if filter_type=='monthly' else '',
-                        'type_lifetime': 'selected' if filter_type=='lifetime' else '',
-                        'type_general': 'selected' if filter_type=='general' else ''
-                    }
-
-                    now_ts = int(time.time())
-                    rows = []
-                    for key, data in key_manager.keys.items():
-                        key_type = data.get('key_type', 'general')
-                        expires = data.get('expiration_time')
-                        exp_ts = int(expires or 0)
-                        remaining = max(0, exp_ts - now_ts)
-                        is_active = data.get('is_active', False)
-                        user_id = data.get('user_id', 0)
-                        if not is_active:
-                            status = 'revoked'
-                        elif exp_ts <= now_ts:
-                            status = 'expired'
-                        elif user_id == 0:
-                            status = 'unassigned'
-                        else:
-                            status = 'active'
-                        # Apply filters
-                        if filter_status != 'all' and status != filter_status:
-                            continue
-                        if filter_type != 'all' and key_type != filter_type:
-                            continue
-                        rows.append({
-                            'key': key,
-                            'type': key_type,
-                            'status': status,
-                            'user': (f"<@{user_id}>" if user_id else 'Unassigned'),
-                            'expires': exp_ts,
-                            'remaining': remaining,
-                            'not_activated': (data.get('activation_time') is None)
-                        })
-
-                    # Build HTML
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    def fmt_rem(sec:int, not_activated: bool, key_type: str) -> str:
-                        if key_type == 'lifetime':
-                            return '∞'
-                        if not_activated:
-                            return 'Not activated yet'
-                        d=sec//86400; h=(sec%86400)//3600; m=(sec%3600)//60
-                        return f"{d}d {h}h {m}m" if sec>0 else '—'
-                    table_rows = []
-                    for r in rows:
-                        safe_key = html.escape(r['key'])
-                        exp_cell = ('<t:'+str(r['expires'])+':R>') if r['expires'] else ('∞' if r['type']=='lifetime' else '—')
-                        table_rows.append(f"""
-                        <tr>
-                          <td><code>{safe_key}</code></td>
-                          <td>{html.escape(r['type'])}</td>
-                          <td>{html.escape(r['status'].capitalize())}</td>
-                          <td>{r['user']}</td>
-                          <td>{fmt_rem(r['remaining'], r['not_activated'], r['type'])}</td>
-                          <td>{exp_cell}</td>
-                          <td style='display:flex;gap:6px'>
-                            <form method='POST' action='/revoke' onsubmit="return confirm('Revoke this key?')">
-                              <input type='hidden' name='key' value='{safe_key}'/>
-                              <button type='submit'>Revoke</button>
-                            </form>
-                            <form method='POST' action='/delete' onsubmit="return confirm('Delete this key?')">
-                              <input type='hidden' name='key' value='{safe_key}'/>
-                              <button type='submit'>Delete</button>
-                            </form>
-                          </td>
-                        </tr>
-                        """)
-                    keys_html = f"""
-                    <html><head><title>Keys</title>
-                      <style>
-                        body{{font-family:Inter,Arial,sans-serif;background:#0b0718;color:#efeaff;margin:0}}
-                        header{{background:#120a2a;border-bottom:1px solid #1f1440;padding:16px 24px;display:flex;gap:16px;align-items:center}}
-                        a.nav{{color:#b399ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#1a1240;border:1px solid #1f1440}}
-                        a.nav:hover{{background:#1e154d}}
-                        main{{padding:24px}}
-                        .card{{background:#120a2a;border:1px solid #1f1440;border-radius:12px;padding:20px}}
-                        table{{width:100%;border-collapse:collapse;margin-top:12px}}
-                        th,td{{border-bottom:1px solid #1f1440;padding:8px 10px;text-align:left}}
-                        th{{color:#b399ff}}
-                        select,input,button{{padding:8px 10px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#efeaff}}
-                        button{{cursor:pointer;background:#6c4af2;border-color:#2049cc}}
-                        button:hover{{filter:brightness(0.95)}}
-                        code{{background:#121a36;padding:2px 6px;border-radius:6px}}
-                        .filters{{display:flex;gap:8px;align-items:center}}
-                      </style>
-                    </head>
-                    <body>
-                      <header>
-                        <a class='nav' href='/'>Dashboard</a>
-                        <a class='nav' href='/keys'>Keys</a>
-                        <a class='nav' href='/my'>My Keys</a>
-                        <a class='nav' href='/deleted'>Deleted</a>
-                        <a class='nav' href='/backup'>Backup</a>
-                        <a class='nav' href='/generate-form'>Generate</a>
-                      </header>
-                      <main>
-                        <div class='card'>
-                          <div class='filters'>
-                            <form method='GET' action='/keys'>
-                              <label>Status</label>
-                              <select name='status'>
-                                <option {sel['status_all']} value='all'>All</option>
-                                <option {sel['status_active']} value='active'>Active</option>
-                                <option {sel['status_unassigned']} value='unassigned'>Unassigned</option>
-                                <option {sel['status_expired']} value='expired'>Expired</option>
-                                <option {sel['status_revoked']} value='revoked'>Revoked</option>
-                              </select>
-                              <label>Type</label>
-                              <select name='type'>
-                                <option {sel['type_all']} value='all'>All</option>
-                                <option {sel['type_daily']} value='daily'>Daily</option>
-                                <option {sel['type_weekly']} value='weekly'>Weekly</option>
-                                <option {sel['type_monthly']} value='monthly'>Monthly</option>
-                                <option {sel['type_lifetime']} value='lifetime'>Lifetime</option>
-                                <option {sel['type_general']} value='general'>General</option>
-                              </select>
-                              <button type='submit'>Apply</button>
-                            </form>
-                          </div>
-                          <table>
-                            <thead><tr>
-                              <th>Key</th><th>Type</th><th>Status</th><th>User</th><th>Remaining</th><th>Expires</th><th>Actions</th>
-                            </tr></thead>
-                            <tbody>
-                              {''.join(table_rows) if table_rows else '<tr><td colspan="7">No keys found</td></tr>'}
-                            </tbody>
-                          </table>
-                        </div>
-                      </main>
-                    </body>
-                    </html>
-                    """
-                    self.wfile.write(keys_html.encode())
-                    return
-
-                if self.path == '/deleted':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    table_rows = []
-                    for key, data in key_manager.deleted_keys.items():
-                        safe_key = html.escape(key)
-                        who = data.get('deleted_by', 'admin')
-                        when = data.get('deleted_at', data.get('activation_time', 0))
-                        table_rows.append(f"""
-                        <tr>
-                          <td><code>{safe_key}</code></td>
-                          <td>{html.escape(data.get('key_type',''))}</td>
-                          <td>{html.escape(str(who))}</td>
-                          <td><t:{when}:R></td>
-                        </tr>
-                        """)
-                    html_doc = f"""
-                    <html><head><title>Deleted Keys</title>
-                      <style>
-                        body{{font-family:Inter,Arial,sans-serif;background:#0b0718;color:#efeaff;margin:0}}
-                        header{{background:#120a2a;border-bottom:1px solid #1f1440;padding:16px 24px;display:flex;gap:16px;align-items:center}}
-                        a.nav{{color:#b399ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#1a1240;border:1px solid #1f1440}}
-                        a.nav:hover{{background:#1e154d}}
-                        main{{padding:24px}}
-                        .card{{background:#0e1630;border:1px solid #1f2a4a;border-radius:12px;padding:20px}}
-                        table{{width:100%;border-collapse:collapse;margin-top:12px}}
-                        th,td{{border-bottom:1px solid #1f2a4a;padding:8px 10px;text-align:left}}
-                        th{{color:#9ab0ff}}
-                        code{{background:#121a36;padding:2px 6px;border-radius:6px}}
-                      </style>
-                    </head>
-                    <body>
-                      <header>
-                        <a class='nav' href='/'>Dashboard</a>
-                        <a class='nav' href='/keys'>Keys</a>
-                        <a class='nav' href='/deleted'>Deleted</a>
-                        <a class='nav' href='/generate-form'>Generate</a>
-                      </header>
-                      <main>
-                        <div class='card'>
-                          <h2>Deleted Keys</h2>
-                          <table>
-                            <thead><tr>
-                              <th>Key</th><th>Type</th><th>Deleted By</th><th>When</th>
-                            </tr></thead>
-                            <tbody>
-                              {''.join(table_rows) if table_rows else '<tr><td colspan="4">No deleted keys</td></tr>'}
-                            </tbody>
-                          </table>
-                        </div>
-                      </main>
-                    </body>
-                    </html>
-                    """
-                    self.wfile.write(html_doc.encode())
-                    return
-
-                if self.path.startswith('/my'):
-                    # My Keys page: enter Discord user ID to view assigned keys
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    user_q = q.get('user_id', [""])[0]
-                    try:
-                        target_uid = int(user_q) if user_q else None
-                    except Exception:
-                        target_uid = None
-
-                    now_ts = int(time.time())
-                    rows = []
-                    if target_uid is not None:
-                        for key, data in key_manager.keys.items():
-                            if data.get('user_id', 0) == target_uid:
-                                expires = data.get('expiration_time')
-                                exp_ts = int(expires or 0)
-                                remaining = max(0, exp_ts - now_ts)
-                                is_active = data.get('is_active', False)
-                                status = 'revoked' if not is_active else ('expired' if exp_ts <= now_ts and exp_ts > 0 else 'active')
-                                rows.append({
-                                    'key': key,
-                                    'status': status,
-                                    'expires': exp_ts,
-                                    'remaining': remaining,
-                                    'type': data.get('key_type','')
-                                })
-                    def fmt_rem(sec:int, not_activated: bool) -> str:
-                        if not_activated:
-                            return 'Not activated yet'
-                        d=sec//86400; h=(sec%86400)//3600; m=(sec%3600)//60
-                        return f"{d}d {h}h {m}m" if sec>0 else '—'
-                    table_rows = []
-                    for r in rows:
-                        safe_key = html.escape(r['key'])
-                        table_rows.append(f"""
-                        <tr>
-                          <td><code>{safe_key}</code></td>
-                          <td>{html.escape(r['type'])}</td>
-                          <td>{html.escape(r['status'].capitalize())}</td>
-                          <td>{fmt_rem(r['remaining'], r['not_activated'], r['type'])}</td>
-                          <td>{('<t:'+str(r['expires'])+':R>') if r['expires'] else '—'}</td>
-                        </tr>
-                        """)
-                    page = f"""
-                    <html><head><title>My Keys</title>
-                      <style>
-                        body{{font-family:Inter,Arial,sans-serif;background:#0b0718;color:#efeaff;margin:0}}
-                        header{{background:#120a2a;border-bottom:1px solid #1f1440;padding:16px 24px;display:flex;gap:16px;align-items:center}}
-                        a.nav{{color:#b399ff;text-decoration:none;padding:8px 12px;border-radius:8px;background:#1a1240;border:1px solid #1f1440}}
-                        a.nav:hover{{background:#1e154d}}
-                        main{{padding:24px}}
-                        .card{{background:#120a2a;border:1px solid #1f1440;border-radius:12px;padding:20px}}
-                        table{{width:100%;border-collapse:collapse;margin-top:12px}}
-                        th,td{{border-bottom:1px solid #1f1440;padding:8px 10px;text-align:left}}
-                        th{{color:#b399ff}}
-                        input,button{{padding:8px 10px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#efeaff}}
-                        button{{cursor:pointer;background:#6c4af2;border-color:#2049cc}}
-                        button:hover{{filter:brightness(0.95)}}
-                        code{{background:#121a36;padding:2px 6px;border-radius:6px}}
-                      </style>
-                    </head>
-                    <body>
-                      <header>
-                        <a class='nav' href='/'>Dashboard</a>
-                        <a class='nav' href='/keys'>Keys</a>
-                        <a class='nav' href='/my'>My Keys</a>
-                        <a class='nav' href='/deleted'>Deleted</a>
-                        <a class='nav' href='/generate-form'>Generate</a>
-                        <a class='nav' href='/backup'>Backup</a>
-                      </header>
-                      <main>
-                        <div class='card'>
-                          <h2>My Keys</h2>
-                          <form method='GET' action='/my'>
-                            <label>Discord User ID</label>
-                            <input type='text' name='user_id' value='{html.escape(user_q)}' placeholder='Enter your Discord user ID'/>
-                            <button type='submit'>View</button>
-                          </form>
-                          <table>
-                            <thead><tr><th>Key</th><th>Type</th><th>Status</th><th>Remaining</th><th>Expires</th></tr></thead>
-                            <tbody>
-                              {''.join(table_rows) if table_rows else ('<tr><td colspan="5">Enter your Discord user ID above to view assigned keys</td></tr>' if not user_q else '<tr><td colspan="5">No keys found for this user</td></tr>')}
-                            </tbody>
-                          </table>
-                          { (f"<p style='margin-top:12px'><a class='nav' href='/backup?user_id={html.escape(user_q)}'>Download backup for this user</a></p>" if user_q else '') }
-                        </div>
-                      </main>
-                    </body>
-                    </html>
-                    """
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    self.wfile.write(page.encode())
-                    return
-
-                if self.path.startsWith('/backup'):
-                    # JSON backup; optional user_id filter
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    user_q = q.get('user_id', [None])[0]
-                    payload = {}
-                    if user_q:
-                        try:
-                            uid = int(user_q)
-                        except Exception:
-                            uid = None
-                        if uid is not None:
-                            subset = {}
-                            subset_usage = {}
-                            for k, data in key_manager.keys.items():
-                                if data.get('user_id', 0) == uid:
-                                    subset[k] = data
-                                    if k in key_manager.key_usage:
-                                        subset_usage[k] = key_manager.key_usage[k]
-                            payload = {
-                                'keys': subset,
-                                'usage': subset_usage
-                            }
-                        else:
-                            payload = {'error': 'invalid user_id'}
-                    else:
-                        payload = {
-                            'keys': key_manager.keys,
-                            'usage': key_manager.key_usage,
-                            'deleted_keys': key_manager.deleted_keys
-                        }
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.send_header('Content-Disposition', 'attachment; filename="backup.json"')
-                    self.end_headers()
-                    try:
-                        self.wfile.write(json.dumps(payload, indent=2).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps(payload, indent=2).encode())
-                    return
-
-                if self.path.startswith('/api/member-status'):
-                    # Return whether a user should have access based on active keys and optional machine binding
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    user_q = q.get('user_id', [None])[0]
-                    machine_q = q.get('machine_id', [None])[0]
-                    try:
-                        uid = int(user_q) if user_q is not None else None
-                    except Exception:
-                        uid = None
-
-                    now_ts = int(time.time())
-                    active_items = []
-                    expired_count = 0
-                    bound_match = False
-                    if uid is not None:
-                        for key, data in key_manager.keys.items():
-                            if data.get('user_id', 0) != uid:
-                                continue
-                            expires = data.get('expiration_time', 0) or 0
-                            if data.get('is_active', False) and (expires == 0 or expires > now_ts):
-                                item = {
-                                    'key': key,
-                                    'expires_at': expires,
-                                    'time_remaining': (expires - now_ts) if expires else 0,
-                                    'type': data.get('key_type', 'general'),
-                                    'machine_id': data.get('machine_id')
-                                }
-                                active_items.append(item)
-                                if machine_q:
-                                    mid = str(data.get('machine_id') or '')
-                                    # Accept exact machine binding OR legacy slash-activation binding (machine_id == user_id)
-                                    if (mid and str(machine_q) == mid) or (mid and str(uid) == mid):
-                                        bound_match = True
-                            else:
-                                if expires and expires <= now_ts:
-                                    expired_count += 1
-
-                    has_active_key = len(active_items) > 0
-                    # Role-based access: check if user currently has the Discord role
-                    has_role = False
-                    try:
-                        guild = bot.get_guild(GUILD_ID)
-                        if guild and uid:
-                            member = guild.get_member(uid)
-                            if member is None:
-                                # Fallback to fetching the member if not in cache
-                                async def _fetch_member():
-                                    try:
-                                        return await guild.fetch_member(uid)
-                                    except Exception:
-                                        return None
-                                fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
-                                try:
-                                    member = fut.result(timeout=5)
-                                except Exception:
-                                    member = None
-                            if member:
-                                has_role = any((r.id == ROLE_ID) or (r.name.lower() == ROLE_NAME.lower()) for r in member.roles)
-                    except Exception:
-                        has_role = False
-                    # Access should depend on active key (and optional machine binding)
-                    should_have_access = has_active_key and (bound_match or not machine_q)
-                    resp = {
-                        'user_id': uid,
-                        'role_id': ROLE_ID,
-                        'guild_id': GUILD_ID,
-                        'has_active_key': has_active_key,
-                        'has_role': has_role,
-                        'should_have_access': should_have_access,
-                        'bound_match': bound_match,
-                        'active_keys': active_items,
-                        'expired_keys_count': expired_count,
-                        'last_updated': now_ts
-                    }
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    try:
-                        self.wfile.write(json.dumps(resp, indent=2).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps(resp, indent=2).encode())
-                    return
-
-                if self.path.startswith('/api/ann-poll'):
-                    # Owner-only announcements feed
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    since_raw = q.get('since', ['0'])[0]
-                    try:
-                        since_ts = int(since_raw)
-                    except Exception:
-                        since_ts = 0
-                    now_ts = int(time.time())
-                    try:
-                        msgs = []
-                        if os.path.exists(ANN_FILE):
-                            with open(ANN_FILE, 'r') as f:
-                                msgs = json.load(f)
-                        if not isinstance(msgs, list):
-                            msgs = []
-                    except Exception:
-                        msgs = []
-                    new_msgs = [m for m in msgs if int(m.get('ts', 0) or 0) > since_ts]
-                    payload = { 'messages': new_msgs[-100:], 'server_time': now_ts }
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    try:
-                        self.wfile.write(json.dumps(payload, indent=2).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps(payload, indent=2).encode())
-                    return
-
-                if self.path.startswith('/api/chat-poll'):
-                    # Long-poll style: clients poll for new chat messages
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    since_raw = q.get('since', ['0'])[0]
-                    user_q = q.get('user_id', ['0'])[0]
-                    try:
-                        since_ts = int(since_raw)
-                    except Exception:
-                        since_ts = 0
-                    try:
-                        uid = int(user_q)
-                    except Exception:
-                        uid = 0
-                    if not uid:
-                        self.send_response(400)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(b'{"success":false,"error":"missing user_id"}')
-                        return
-                    if not uid:
-                        self.send_response(400)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(b'{"success":false,"error":"missing user_id"}')
-                        return
-                    now_ts = int(time.time())
-                    # Load messages
-                    try:
-                        msgs = []
-                        if os.path.exists(CHAT_FILE):
-                            with open(CHAT_FILE, 'r') as f:
-                                msgs = json.load(f)
-                        if not isinstance(msgs, list):
-                            msgs = []
-                    except Exception:
-                        msgs = []
-                    new_msgs = [m for m in msgs if int(m.get('ts', 0) or 0) > since_ts]
-                    # Determine if user can send: has role or reached threshold
-                    can_send = False
-                    try:
-                        guild = bot.get_guild(GUILD_ID)
-                        cnt = int(MESSAGE_STATS.get(str(uid), 0))
-                        if cnt >= MESSAGES_THRESHOLD:
-                            can_send = True
-                        elif guild and uid:
-                            member = guild.get_member(uid)
-                            if member:
-                                can_send = any(r.id == CHATSEND_ROLE_ID for r in member.roles)
-                    except Exception:
-                        can_send = False
-                    payload = {
-                        'messages': new_msgs[-100:],
-                        'server_time': now_ts,
-                        'can_send': can_send
-                    }
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps(payload, indent=2).encode())
-                    return
-
-                if self.path == '/api/key-info':
-                    parsed = urllib.parse.urlparse(self.path)
-                    q = urllib.parse.parse_qs(parsed.query or '')
-                    key = (q.get('key', [None])[0])
-                    if not key:
-                        self.send_response(400)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        try:
-                            self.wfile.write(json.dumps({'error':'missing key'}).encode())
-                        except Exception:
-                            import json as _json
-                            self.wfile.write(_json.dumps({'error':'missing key'}).encode())
-                        return
-
-                    info = None
-                    if key in key_manager.keys:
-                        d = key_manager.keys[key]
-                        info = {
-                            'exists': True,
-                            'is_active': d.get('is_active', False),
-                            'user_id': d.get('user_id', 0),
-                            'machine_id': d.get('machine_id'),
-                            'duration_days': d.get('duration_days'),
-                            'created_time': d.get('created_time'),
-                            'activation_time': d.get('activation_time'),
-                            'expiration_time': d.get('expiration_time'),
-                            'key_type': d.get('key_type','general')
-                        }
-                    else:
-                        info = {'exists': False}
-                    self.send_response(200)
-                    self.send_header('Content-Type','application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps(info, indent=2).encode())
-                    return
-
-                if self.path == '/download/selfbot.py':
-                    try:
-                        sb_path = os.path.join(os.getcwd(), 'Selfbot.py')
-                        with open(sb_path, 'rb') as f:
-                            data = f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/octet-stream')
-                        self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
-                        self.send_header('Content-Length', str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
-                    except Exception as e:
-                        self.send_response(500)
-                        self.send_header('Content-Type', 'text/plain')
-                        self.end_headers()
-                        self.wfile.write(f"Failed to read SelfBot.py: {e}".encode())
-                    return
-
-                if self.path == '/download/bot.py':
-                    try:
-                        bp_path = os.path.join(os.getcwd(), 'bot.py')
-                        with open(bp_path, 'rb') as f:
-                            data = f.read()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/octet-stream')
-                        self.send_header('Content-Disposition', 'attachment; filename="bot.py"')
-                        self.send_header('Content-Length', str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
-                    except Exception as e:
-                        self.send_response(500)
-                        self.send_header('Content-Type', 'text/plain')
-                        self.end_headers()
-                        self.wfile.write(f"Failed to read bot.py: {e}".encode())
-                    return
-
-                if self.path == '/':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-
-                    # Get comprehensive key statistics for HTML dashboard
-                    total_keys = len(key_manager.keys)
-                    active_keys = sum(1 for k in key_manager.keys.values() if k["is_active"])
-                    revoked_keys = total_keys - active_keys
-                    deleted_keys = len(key_manager.deleted_keys)
-
-                    daily_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"])
-                    weekly_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"])
-                    monthly_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"])
-                    lifetime_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"])
-                    general_keys = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"])
-
-                    available_daily = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"] and k["user_id"] == 0)
-                    available_weekly = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"] and k["user_id"] == 0)
-                    available_monthly = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"] and k["user_id"] == 0)
-                    available_lifetime = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"] and k["user_id"] == 0)
-                    available_general = sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"] and k["user_id"] == 0)
-
-                    response = f"""
-                    <html>
-                      <head>
-                        <title>Discord Key Bot</title>
-                        <meta name='viewport' content='width=device-width, initial-scale=1'/>
-                        <style>
-                          :root {{ --bg:#0b0718; --panel:#120a2a; --muted:#b399ff; --border:#1f1440; --text:#efeaff; --accent:#6c4af2; }}
-                          * {{ box-sizing: border-box; }}
-                          body {{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }}
-                          header {{ background: var(--panel); border-bottom:1px solid var(--border); padding: 16px 24px; display:flex; align-items:center; gap:12px; flex-wrap: wrap; }}
-                          .brand {{ font-weight:700; letter-spacing:0.3px; margin-right:8px; }}
-                          a.nav {{ color: var(--muted); text-decoration:none; padding:8px 12px; border-radius:10px; background:#121a36; border:1px solid #1a2650; }}
-                          a.nav:hover {{ background:#19214a; }}
-                          main {{ padding: 24px; max-width: 1100px; margin: 0 auto; }}
-                          .grid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; }}
-                          .card {{ background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px; }}
-                          .stat {{ display:flex; flex-direction:column; gap:4px; }}
-                          .stat .label {{ color:#b9c7ff; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; }}
-                          .stat .value {{ font-size:28px; font-weight:700; color:#dfe6ff; }}
-                          .muted {{ color:#a4b1d6; font-size:14px; }}
-                          .row {{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }}
-                          .actions a {{ display:inline-block; margin-right:8px; margin-top:8px; color:white; background: var(--accent); padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid #2049cc; }}
-                          .actions a:hover {{ filter: brightness(0.95); }}
-                          .kgrid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; }}
-                          .kbox {{ background:#0b132b; border:1px solid #1c2b5b; padding:14px; border-radius:12px; }}
-                          .kbox .ttl {{ color:#b9c7ff; font-size:12px; letter-spacing:0.3px; text-transform:uppercase; }}
-                          .kbox .num {{ font-size:22px; font-weight:700; color:#e6edff; }}
-                          .kbox .sub {{ font-size:12px; color:#9ab0ff; margin-top:4px; }}
-                        </style>
-                      </head>
-                      <body>
-                        <header>
-                          <div class='brand' style='font-size:28px;font-weight:800;letter-spacing:0.6px'>CS BOT <span style='font-weight:600;color:#b799ff'>made by iris&classical</span></div>
-                          <a class='nav' href='/'>Dashboard</a>
-                          <a class='nav' href='/keys'>Keys</a>
-                          <a class='nav' href='/my'>My Keys</a>
-                          <a class='nav' href='/deleted'>Deleted</a>
-                          <a class='nav' href='/generate-form'>Generate</a>
-                          <a class='nav' href='/backup'>Backup</a>
-                        </header>
-                        <main>
-                          <div class='row'>
-                            <div class='card' style='flex:2'>
-                              <div class='grid'>
-                                <div class='stat card'>
-                                  <div class='label'>Total Keys</div>
-                                  <div class='value'>{total_keys}</div>
-                                  <div class='muted'>All keys in database</div>
-                                </div>
-                                <div class='stat card'>
-                                  <div class='label'>Active</div>
-                                  <div class='value'>{active_keys}</div>
-                                  <div class='muted'>Currently valid</div>
-                                </div>
-                                <div class='stat card'>
-                                  <div class='label'>Revoked</div>
-                                  <div class='value'>{revoked_keys}</div>
-                                  <div class='muted'>Access removed</div>
-                                </div>
-                                <div class='stat card'>
-                                  <div class='label'>Deleted</div>
-                                  <div class='value'>{deleted_keys}</div>
-                                  <div class='muted'>Moved to recycle</div>
-                                </div>
-                              </div>
-                              <div class='actions'>
-                                <a href='/keys'>Manage Keys</a>
-                                <a href='/generate-form'>Generate Keys</a>
-                                <a href='/my'>My Keys</a>
-                                <a href='/backup'>Backup</a>
-                              </div>
-                            </div>
-                          </div>
-                          <div style='height:16px'></div>
-                          <div class='card'>
-                            <div class='kgrid'>
-                              <div class='kbox'>
-                                <div class='ttl'>Daily Keys</div>
-                                <div class='num'>{daily_keys}</div>
-                                <div class='sub'>Available: {available_daily}</div>
-                              </div>
-                              <div class='kbox'>
-                                <div class='ttl'>Weekly Keys</div>
-                                <div class='num'>{weekly_keys}</div>
-                                <div class='sub'>Available: {available_weekly}</div>
-                              </div>
-                              <div class='kbox'>
-                                <div class='ttl'>Monthly Keys</div>
-                                <div class='num'>{monthly_keys}</div>
-                                <div class='sub'>Available: {available_monthly}</div>
-                              </div>
-                              <div class='kbox'>
-                                <div class='ttl'>Lifetime Keys</div>
-                                <div class='num'>{lifetime_keys}</div>
-                                <div class='sub'>Available: {available_lifetime}</div>
-                              </div>
-                              <div class='kbox'>
-                                <div class='ttl'>General Keys</div>
-                                <div class='num'>{general_keys}</div>
-                                <div class='sub'>Available: {available_general}</div>
-                              </div>
-                            </div>
-                            <div class='muted' style='margin-top:10px'>
-                              Status: Online • {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')} • Bot: {bot.user.name if bot.user else 'Starting...'}
-                            </div>
-                          </div>
-                        </main>
-                      </body>
-                    </html>
-                    """
-                    self.wfile.write(response.encode())
-                    return
-
-                if self.path == '/api/keys':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-
-                    keys_data = {
-                        "total_keys": len(key_manager.keys),
-                        "active_keys": sum(1 for k in key_manager.keys.values() if k["is_active"]),
-                        "revoked_keys": sum(1 for k in key_manager.keys.values() if not k["is_active"]),
-                        "deleted_keys": len(key_manager.deleted_keys),
-                        "keys_by_type": {
-                            "daily": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"]),
-                            "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"]),
-                            "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"]),
-                            "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"]),
-                            "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"])
-                        },
-                        "available_keys": {
-                            "daily": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"] and k["user_id"] == 0),
-                            "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"] and k["user_id"] == 0),
-                            "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"] and k["user_id"] == 0),
-                            "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"] and k["user_id"] == 0),
-                            "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"] and k["user_id"] == 0)
-                        },
-                        "last_updated": int(time.time())
-                    }
-                    try:
-                        self.wfile.write(json.dumps(keys_data, indent=2).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps(keys_data, indent=2).encode())
-                    return
-
-                # Direct download endpoints
-                if self.path.lower() in ('/download/selfbot.py', '/download/selfbot'):
-                    try:
-                        file_path = os.path.join('.', 'Selfbot.py')
-                        if not os.path.exists(file_path):
-                            self.send_response(404)
-                            self.end_headers()
-                            self.wfile.write(b'Not found')
-                            return
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/octet-stream')
-                        self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
-                        self.end_headers()
-                        with open(file_path, 'rb') as f:
-                            self.wfile.write(f.read())
-                        return
-                    except Exception as e:
-                        self.send_response(500)
-                        self.end_headers()
-                        self.wfile.write(str(e).encode())
-                        return
-                if self.path.lower() in ('/download/bot.py', '/download/bot'):
-                    try:
-                        file_path = os.path.join('.', 'bot.py')
-                        if not os.path.exists(file_path):
-                            self.send_response(404)
-                            self.end_headers()
-                            self.wfile.write(b'Not found')
-                            return
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/octet-stream')
-                        self.send_header('Content-Disposition', 'attachment; filename="bot.py"')
-                        self.end_headers()
-                        with open(file_path, 'rb') as f:
-                            self.wfile.write(f.read())
-                        return
-                    except Exception as e:
-                        self.send_response(500)
-                        self.end_headers()
-                        self.wfile.write(str(e).encode())
-                        return
-
-                # Redirect unknown routes to dashboard instead of 404
-                self.send_response(303)
-                self.send_header('Location', '/')
-                self.end_headers()
-            except Exception as e:
+                # Parse form
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                chan_str = (data.get('channel_id', [''])[0]).strip()
+                content = (data.get('content', [''])[0]).strip()
+                ok = False
+                err = None
                 try:
-                    self.send_response(500)
-                    self.send_header('Content-type', 'text/plain')
+                    cid = int(chan_str)
+                    ch = bot.get_channel(cid)
+                    if ch is None:
+                        err = 'Bot cannot see this channel'
+                    elif not content:
+                        err = 'Empty message'
+                    else:
+                        fut = asyncio.run_coroutine_threadsafe(ch.send(content), bot.loop)
+                        fut.result(timeout=5)
+                        ok = True
+                except Exception as e:
+                    err = str(e)
+                # Redirect back with a flash-like message in query
+                self.send_response(303)
+                if ok:
+                    self.send_header('Location', '/sender')
+                else:
+                    msg = urllib.parse.quote(err or 'Failed')
+                    self.send_header('Location', f'/sender?err={msg}')
+                self.end_headers()
+                return
+
+            if self.path == '/api/ann-post':
+                # Only members with OWNER_ROLE_ID can post announcements
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                content = (data.get('content', [''])[0] or '').strip()
+                user_q = (data.get('user_id', [''])[0] or '').strip()
+                if not content:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
                     self.end_headers()
-                    self.wfile.write(f"Internal Server Error: {e}".encode())
+                    self.wfile.write(b'{"success":false,"error":"empty content"}')
+                    return
+                try:
+                    uid = int(user_q)
                 except Exception:
-                    pass
-
-        def do_POST(self):
-            try:
-                if self.path == '/generate':
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body = self.rfile.read(content_length).decode()
-                    data = urllib.parse.parse_qs(body)
-                    def to_int(name):
-                        try:
-                            return max(0, int(data.get(name, ['0'])[0]))
-                        except Exception:
-                            return 0
-                    daily = to_int('daily')
-                    weekly = to_int('weekly')
-                    monthly = to_int('monthly')
-                    lifetime = to_int('lifetime')
-
-                    result = key_manager.generate_bulk_keys(daily, weekly, monthly, lifetime)
-                    key_manager.last_generated = result
-
-                    self.send_response(303)
-                    self.send_header('Location','/generate-form')
-                    self.end_headers()
-                    return
-
-                if self.path in ('/revoke','/delete'):
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body = self.rfile.read(content_length).decode()
-                    data = urllib.parse.parse_qs(body)
-                    key = (data.get('key',[None])[0])
-                    if not key:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b'Missing key')
-                        return
-                    ok = False
-                    if self.path == '/revoke':
-                        ok = key_manager.revoke_key(key)
-                    else:
-                        ok = key_manager.delete_key(key)
-                    self.send_response(303)
-                    self.send_header('Location','/keys')
-                    self.end_headers()
-                    return
-
-                if self.path == '/api/activate':
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body = self.rfile.read(content_length).decode()
-                    data = urllib.parse.parse_qs(body)
-                    key = (data.get('key', [None])[0])
-                    user_id_str = (data.get('user_id', [None])[0])
-                    machine = (data.get('machine_id', [''])[0])
-                    try:
-                        user_id_val = int(user_id_str) if user_id_str is not None else None
-                    except Exception:
-                        user_id_val = None
-                    resp = {}
-                    status_code = 200
-                    if not key or not user_id_val or not machine:
-                        resp = {'success': False, 'error': 'missing key, user_id, or machine_id'}
-                        status_code = 400
-                    else:
-                        try:
-                            result = key_manager.activate_key(key, str(machine), int(user_id_val))
-                            resp = result
-                            if not result.get('success'):
-                                status_code = 400
-                                print(f"/api/activate failure for key={key}: {result}")
-                            else:
-                                # Grant role immediately upon successful activation
+                    uid = 0
+                allowed = False
+                try:
+                    guild = bot.get_guild(GUILD_ID)
+                    if guild and uid:
+                        member = guild.get_member(uid)
+                        if member is None:
+                            async def _fetch_member():
                                 try:
-                                    guild = bot.get_guild(GUILD_ID)
-                                    role = guild.get_role(ROLE_ID) if guild else None
-                                    if not role and guild:
-                                        import discord as _discord
-                                        role = _discord.utils.find(lambda r: r.name.lower() == ROLE_NAME.lower(), guild.roles)
-                                    if guild and role and user_id_val:
-                                        async def _add_role():
-                                            member = guild.get_member(int(user_id_val))
-                                            if member:
-                                                await member.add_roles(role, reason="Key activated via API")
-                                        asyncio.run_coroutine_threadsafe(_add_role(), bot.loop)
-                                except Exception:
-                                    pass
-                        except Exception as e:
-                            resp = {'success': False, 'error': str(e)}
-                            status_code = 500
-                            print(f"/api/activate exception: {e}")
-                    self.send_response(status_code)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    try:
-                        self.wfile.write(json.dumps(resp, indent=2).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps(resp, indent=2).encode())
-                    return
-
-                if self.path == '/api/rebind':
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body = self.rfile.read(content_length).decode()
-                    data = urllib.parse.parse_qs(body)
-                    key = (data.get('key', [None])[0])
-                    user_id_str = (data.get('user_id', [None])[0])
-                    new_machine = (data.get('machine_id', [''])[0])
-                    try:
-                        user_id_val = int(user_id_str) if user_id_str is not None else None
-                    except Exception:
-                        user_id_val = None
-                    resp = {}
-                    status_code = 200
-                    if not key or not user_id_val or not new_machine:
-                        resp = {'success': False, 'error': 'missing key, user_id, or machine_id'}
-                        status_code = 400
-                    else:
-                        try:
-                            result = key_manager.rebind_key(key, int(user_id_val), str(new_machine))
-                            resp = result
-                            if not result.get('success'):
-                                status_code = 400
-                        except Exception as e:
-                            resp = {'success': False, 'error': str(e)}
-                            status_code = 500
-                    self.send_response(status_code)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    try:
-                        self.wfile.write(json.dumps(resp, indent=2).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps(resp, indent=2).encode())
-                    return
-
-                if self.path == '/sender':
-                    # Auth check via cookie
-                    cookies = _parse_cookies(self.headers.get('Cookie'))
-                    session = _decode_session(cookies.get('panel_session')) if cookies.get('panel_session') else None
-                    authed_uid = int(session.get('user_id')) if session else None
-                    authed_mid = str(session.get('machine_id')) if session else None
-                    if not authed_uid or not _has_active_access(authed_uid, authed_mid):
-                        self.send_response(303)
-                        self.send_header('Location', '/login')
-                        self.end_headers()
-                        return
-                    # Parse form
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body = self.rfile.read(content_length).decode()
-                    data = urllib.parse.parse_qs(body)
-                    chan_str = (data.get('channel_id', [''])[0]).strip()
-                    content = (data.get('content', [''])[0]).strip()
-                    ok = False
-                    err = None
-                    try:
-                        cid = int(chan_str)
-                        ch = bot.get_channel(cid)
-                        if ch is None:
-                            err = 'Bot cannot see this channel'
-                        elif not content:
-                            err = 'Empty message'
-                        else:
-                            fut = asyncio.run_coroutine_threadsafe(ch.send(content), bot.loop)
-                            fut.result(timeout=5)
-                            ok = True
-                    except Exception as e:
-                        err = str(e)
-                    # Redirect back with a flash-like message in query
-                    self.send_response(303)
-                    if ok:
-                        self.send_header('Location', '/sender')
-                    else:
-                        msg = urllib.parse.quote(err or 'Failed')
-                        self.send_header('Location', f'/sender?err={msg}')
-                    self.end_headers()
-                    return
-
-                if self.path == '/api/ann-post':
-                    # Only members with OWNER_ROLE_ID can post announcements
-                    content_length = int(self.headers.get('Content-Length', 0))
-                    body = self.rfile.read(content_length).decode()
-                    data = urllib.parse.parse_qs(body)
-                    content = (data.get('content', [''])[0] or '').strip()
-                    user_q = (data.get('user_id', [''])[0] or '').strip()
-                    if not content:
-                        self.send_response(400)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(b'{"success":false,"error":"empty content"}')
-                        return
-                    try:
-                        uid = int(user_q)
-                    except Exception:
-                        uid = 0
-                    allowed = False
-                    try:
-                        guild = bot.get_guild(GUILD_ID)
-                        if guild and uid:
-                            member = guild.get_member(uid)
-                            if member is None:
-                                async def _fetch_member():
-                                    try:
-                                        return await guild.fetch_member(uid)
-                                    except Exception:
-                                        return None
-                                fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
-                                try:
-                                    member = fut.result(timeout=5)
-                                except Exception:
-                                    member = None
-                            if member:
-                                allowed = any((r.id == OWNER_ROLE_ID) or (r.id == ADMIN_ROLE_ID) for r in member.roles)
-                    except Exception:
-                        allowed = False
-                    if not allowed:
-                        self.send_response(403)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        reason = {'success': False, 'error': 'forbidden', 'reason': 'not_owner'}
-                        try:
-                            self.wfile.write(json.dumps(reason).encode())
-                        except Exception:
-                            import json as _json
-                            self.wfile.write(_json.dumps(reason).encode())
-                        return
-                    # Append announcement
-                    try:
-                        msgs = []
-                        if os.path.exists(ANN_FILE):
-                            with open(ANN_FILE, 'r') as f:
-                                msgs = json.load(f)
-                        if not isinstance(msgs, list):
-                            msgs = []
-                        ts = int(time.time())
-                        # Resolve username and avatar for announcer
-                        username = str(uid)
-                        avatar_url = ""
-                        try:
-                            async def _fetch_user():
-                                try:
-                                    return await bot.fetch_user(uid)
+                                    return await guild.fetch_member(uid)
                                 except Exception:
                                     return None
-                            fut = asyncio.run_coroutine_threadsafe(_fetch_user(), bot.loop)
-                            user = fut.result(timeout=5)
-                            if user:
-                                username = f"{user.name}#{user.discriminator}"
-                                try:
-                                    avatar_url = str(user.display_avatar.url)
-                                except Exception:
-                                    avatar_url = ""
-                        except Exception:
-                            pass
-                        msgs.append({'ts': ts, 'content': content, 'user_id': uid, 'username': username, 'avatar_url': avatar_url})
-                        msgs = msgs[-200:]
-                        tmp = ANN_FILE + '.tmp'
-                        with open(tmp, 'w') as f:
-                            json.dump(msgs, f, indent=2)
-                        os.replace(tmp, ANN_FILE)
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': True, 'ts': ts}).encode())
-                        return
-                    except Exception as e:
-                        self.send_response(500)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
-                        return
+                            fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
+                            try:
+                                member = fut.result(timeout=5)
+                            except Exception:
+                                member = None
+                        if member:
+                            allowed = any((r.id == OWNER_ROLE_ID) or (r.id == ADMIN_ROLE_ID) for r in member.roles)
+                except Exception:
+                    allowed = False
+                if not allowed:
+                    self.send_response(403)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    reason = {'success': False, 'error': 'forbidden', 'reason': 'not_owner'}
+                    try:
+                        self.wfile.write(json.dumps(reason).encode())
+                    except Exception:
+                        import json as _json
+                        self.wfile.write(_json.dumps(reason).encode())
+                    return
+                # Append announcement
+                try:
+                    msgs = []
+                    if os.path.exists(ANN_FILE):
+                        with open(ANN_FILE, 'r') as f:
+                            msgs = json.load(f)
+                    if not isinstance(msgs, list):
+                        msgs = []
+                    ts = int(time.time())
+                    # Resolve username and avatar for announcer
+                    username = str(uid)
+                    avatar_url = ""
+                    try:
+                        async def _fetch_user():
+                            try:
+                                return await bot.fetch_user(uid)
+                            except Exception:
+                                return None
+                        fut = asyncio.run_coroutine_threadsafe(_fetch_user(), bot.loop)
+                        user = fut.result(timeout=5)
+                        if user:
+                            username = f"{user.name}#{user.discriminator}"
+                            try:
+                                avatar_url = str(user.display_avatar.url)
+                            except Exception:
+                                avatar_url = ""
+                    except Exception:
+                        pass
+                    msgs.append({'ts': ts, 'content': content, 'user_id': uid, 'username': username, 'avatar_url': avatar_url})
+                    msgs = msgs[-200:]
+                    tmp = ANN_FILE + '.tmp'
+                    with open(tmp, 'w') as f:
+                        json.dump(msgs, f, indent=2)
+                    os.replace(tmp, ANN_FILE)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': True, 'ts': ts}).encode())
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+                    return
 
-                if self.path == '/api/chat-post':
-                    # Only members with ADMIN_CHAT_ROLE_ID (or ADMIN_ROLE_ID) can post broadcast messages
+            if self.path == '/api/chat-post':
+                # Only members with ADMIN_CHAT_ROLE_ID (or ADMIN_ROLE_ID) can post broadcast messages
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode()
+                data = urllib.parse.parse_qs(body)
+                content = (data.get('content', [''])[0] or '').strip()
+                user_q = (data.get('user_id', [''])[0] or '').strip()
+                if not content:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"success":false,"error":"empty content"}')
+                    return
+                try:
+                    uid = int(user_q)
+                except Exception:
+                    uid = 0
+                allowed = False
+                try:
+                    guild = bot.get_guild(GUILD_ID)
+                    cnt = int(MESSAGE_STATS.get(str(uid), 0))
+                    if cnt >= MESSAGES_THRESHOLD:
+                        allowed = True
+                    if not allowed and guild and uid:
+                        member = guild.get_member(uid)
+                        if member is None:
+                            async def _fetch_member():
+                                try:
+                                    return await guild.fetch_member(uid)
+                                except Exception:
+                                    return None
+                            fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
+                            try:
+                                member = fut.result(timeout=5)
+                            except Exception:
+                                member = None
+                        if member:
+                            allowed = any((r.id == CHATSEND_ROLE_ID) or (r.id == ADMIN_ROLE_ID) for r in member.roles)
+                except Exception:
+                    allowed = False
+                if not allowed:
+                    self.send_response(403)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    reason = {'success': False, 'error': 'forbidden', 'reason': 'role_or_threshold'}
+                    try:
+                        self.wfile.write(json.dumps(reason).encode())
+                    except Exception:
+                        import json as _json
+                        self.wfile.write(_json.dumps(reason).encode())
+                    return
+                # Append message
+                try:
+                    msgs = []
+                    if os.path.exists(CHAT_FILE):
+                        with open(CHAT_FILE, 'r') as f:
+                            msgs = json.load(f)
+                    if not isinstance(msgs, list):
+                        msgs = []
+                    ts = int(time.time())
+                    # Resolve username and avatar URL for the posting user
+                    username = str(uid)
+                    avatar_url = ""
+                    try:
+                        async def _fetch_user():
+                            try:
+                                return await bot.fetch_user(uid)
+                            except Exception:
+                                return None
+                        fut = asyncio.run_coroutine_threadsafe(_fetch_user(), bot.loop)
+                        user = fut.result(timeout=5)
+                        if user:
+                            username = f"{user.name}#{user.discriminator}"
+                            try:
+                                avatar_url = str(user.display_avatar.url)
+                            except Exception:
+                                avatar_url = ""
+                    except Exception:
+                        pass
+                    msgs.append({'ts': ts, 'from': 'admin', 'user_id': uid, 'username': username, 'avatar_url': avatar_url, 'content': content})
+                    msgs = msgs[-200:]
+                    tmp = CHAT_FILE + '.tmp'
+                    with open(tmp, 'w') as f:
+                        json.dump(msgs, f, indent=2)
+                    os.replace(tmp, CHAT_FILE)
+                    # Mirror to webhook (best-effort)
+                    try:
+                        if CHAT_MIRROR_WEBHOOK:
+                            payload = {
+                                'content': f"[{username}] {content}"
+                            }
+                            requests.post(CHAT_MIRROR_WEBHOOK, json=payload, timeout=5)
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': True, 'ts': ts}).encode())
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+                    return
+
+            if self.path == '/api/stat-incr':
+                try:
                     content_length = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(content_length).decode()
                     data = urllib.parse.parse_qs(body)
-                    content = (data.get('content', [''])[0] or '').strip()
-                    user_q = (data.get('user_id', [''])[0] or '').strip()
-                    if not content:
+                    uid = (data.get('user_id', [''])[0] or '').strip()
+                    if not uid:
                         self.send_response(400)
                         self.send_header('Content-Type', 'application/json')
                         self.end_headers()
-                        self.wfile.write(b'{"success":false,"error":"empty content"}')
+                        self.wfile.write(b'{"success":false,"error":"missing user_id"}')
                         return
+                    # Increment and persist
                     try:
-                        uid = int(user_q)
-                    except Exception:
-                        uid = 0
-                    allowed = False
-                    try:
-                        guild = bot.get_guild(GUILD_ID)
-                        cnt = int(MESSAGE_STATS.get(str(uid), 0))
-                        if cnt >= MESSAGES_THRESHOLD:
-                            allowed = True
-                        if not allowed and guild and uid:
-                            member = guild.get_member(uid)
-                            if member is None:
-                                async def _fetch_member():
-                                    try:
-                                        return await guild.fetch_member(uid)
-                                    except Exception:
-                                        return None
-                                fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
-                                try:
-                                    member = fut.result(timeout=5)
-                                except Exception:
-                                    member = None
-                            if member:
-                                allowed = any((r.id == CHATSEND_ROLE_ID) or (r.id == ADMIN_ROLE_ID) for r in member.roles)
-                    except Exception:
-                        allowed = False
-                    if not allowed:
-                        self.send_response(403)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        reason = {'success': False, 'error': 'forbidden', 'reason': 'role_or_threshold'}
-                        try:
-                            self.wfile.write(json.dumps(reason).encode())
-                        except Exception:
-                            import json as _json
-                            self.wfile.write(_json.dumps(reason).encode())
-                        return
-                    # Append message
-                    try:
-                        msgs = []
-                        if os.path.exists(CHAT_FILE):
-                            with open(CHAT_FILE, 'r') as f:
-                                msgs = json.load(f)
-                        if not isinstance(msgs, list):
-                            msgs = []
-                        ts = int(time.time())
-                        # Resolve username and avatar URL for the posting user
-                        username = str(uid)
-                        avatar_url = ""
-                        try:
-                            async def _fetch_user():
-                                try:
-                                    return await bot.fetch_user(uid)
-                                except Exception:
-                                    return None
-                            fut = asyncio.run_coroutine_threadsafe(_fetch_user(), bot.loop)
-                            user = fut.result(timeout=5)
-                            if user:
-                                username = f"{user.name}#{user.discriminator}"
-                                try:
-                                    avatar_url = str(user.display_avatar.url)
-                                except Exception:
-                                    avatar_url = ""
-                        except Exception:
-                            pass
-                        msgs.append({'ts': ts, 'from': 'admin', 'user_id': uid, 'username': username, 'avatar_url': avatar_url, 'content': content})
-                        msgs = msgs[-200:]
-                        tmp = CHAT_FILE + '.tmp'
+                        MESSAGE_STATS[uid] = int(MESSAGE_STATS.get(uid, 0)) + 1
+                        tmp = STATS_FILE + '.tmp'
                         with open(tmp, 'w') as f:
-                            json.dump(msgs, f, indent=2)
-                        os.replace(tmp, CHAT_FILE)
-                        # Mirror to webhook (best-effort)
-                        try:
-                            if CHAT_MIRROR_WEBHOOK:
-                                payload = {
-                                    'content': f"[{username}] {content}"
-                                }
-                                requests.post(CHAT_MIRROR_WEBHOOK, json=payload, timeout=5)
-                        except Exception:
-                            pass
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': True, 'ts': ts}).encode())
-                        return
+                            json.dump(MESSAGE_STATS, f, indent=2)
+                        os.replace(tmp, STATS_FILE)
                     except Exception as e:
                         self.send_response(500)
                         self.send_header('Content-Type', 'application/json')
                         self.end_headers()
                         self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
                         return
-
-                if self.path == '/api/stat-incr':
-                    try:
-                        content_length = int(self.headers.get('Content-Length', 0))
-                        body = self.rfile.read(content_length).decode()
-                        data = urllib.parse.parse_qs(body)
-                        uid = (data.get('user_id', [''])[0] or '').strip()
-                        if not uid:
-                            self.send_response(400)
-                            self.send_header('Content-Type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(b'{"success":false,"error":"missing user_id"}')
-                            return
-                        # Increment and persist
-                        try:
-                            MESSAGE_STATS[uid] = int(MESSAGE_STATS.get(uid, 0)) + 1
-                            tmp = STATS_FILE + '.tmp'
-                            with open(tmp, 'w') as f:
-                                json.dump(MESSAGE_STATS, f, indent=2)
-                            os.replace(tmp, STATS_FILE)
-                        except Exception as e:
-                            self.send_response(500)
-                            self.send_header('Content-Type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
-                            return
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(b'{"success":true}')
-                        return
-                    except Exception as e:
-                        self.send_response(500)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
-                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"success":true}')
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+                    return
                 
                 # Selfbot heartbeat: mark user active with timestamp
                 if self.path == '/api/selfbot-heartbeat':
@@ -3499,6 +3434,7 @@ async def set_status_webhook_cmd(interaction: discord.Interaction, webhook_url: 
         CONFIG['STATUS_WEBHOOK_URL'] = webhook_url.strip()
         save_config()
         await interaction.response.send_message("✅ Status webhook set.", ephemeral=True)
+
         # Send a test online ping
         try:
             await send_status_webhook('online')
