@@ -1068,7 +1068,7 @@ async def revoke_key(interaction: discord.Interaction, key: str):
 		embed = discord.Embed(
 			title="🗑️ Key Revoked",
 			description=f"Key `{key}` has been successfully revoked.",
-			color=0xff0000
+		 color=0xff0000
 		)
 		await interaction.response.send_message(embed=embed)
 	else:
@@ -3168,3 +3168,14 @@ def _has_active_access(user_id, machine_id):
             if not expires or expires > int(time.time()):
                 return True
     return False
+
+if __name__ == "__main__":
+    PORT = int(os.getenv("PORT", "10000"))
+    def run_health_server():
+        with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), HealthCheckHandler) as server:
+            print(f"🌐 Health check server started on port {PORT}")
+            server.serve_forever()
+    threading.Thread(target=run_health_server, daemon=True).start()
+
+    print("🚀 Starting Discord Bot...")
+    bot.run(BOT_TOKEN)
