@@ -3164,5 +3164,41 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"Internal Server Error: {e}".encode())
 
+if __name__ == "__main__":
+    # Start the health check and API server on port 10000
+    PORT = 10000
+    server = socketserver.ThreadingTCPServer(("0.0.0.0", PORT), HealthCheckHandler)
+    print(f"API server running on port {PORT}")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    print("🚀 Starting Discord Bot...")
+    print("=" * 40)
+
+    import asyncio
+    async def start_with_backoff():
+        delay_seconds = 60
+        max_delay = 900
+        while True:
+            try:
+                print("🔗 Connecting to Discord...")
+                await bot.start(BOT_TOKEN)
+            except Exception as e:
+                msg = str(e)
+                if "429" in msg or "Too Many Requests" in msg:
+                    print(f"⚠️ 429/Rate limited. Retrying in {delay_seconds}s...")
+                else:
+                    print(f"⚠️ Startup error: {e}. Retrying in {delay_seconds}s...")
+                await asyncio.sleep(delay_seconds)
+                delay_seconds = min(delay_seconds * 2, max_delay)
+            else:
+                break
+    try:
+        asyncio.run(start_with_backoff())
+    except KeyboardInterrupt:
+        print("\n👋 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        exit(1)
+
 
 
