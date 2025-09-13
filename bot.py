@@ -3137,15 +3137,34 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
             self.wfile.write(f"Internal Server Error: {e}".encode())
-if __name__ == "__main__":
-    # Start health check server in a background thread
-    PORT = 10000
-    def run_health_server():
-        with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), HealthCheckHandler) as server:
-            print(f"🌐 Health check server started on port {PORT}")
-            server.serve_forever()
-    threading.Thread(target=run_health_server, daemon=True).start()
+def _parse_cookies(cookie_header):
+    """Parse a Cookie header string into a dict."""
+    cookies = {}
+    if not cookie_header:
+        return cookies
+    for item in cookie_header.split(';'):
+        if '=' in item:
+            k, v = item.strip().split('=', 1)
+            cookies[k] = v
+    return cookies
 
-    # Start Discord bot (this keeps the process alive)
-    print("🚀 Starting Discord Bot...")
-    bot.run(BOT_TOKEN)
+def _decode_session(session_str):
+    """Dummy session decoder for panel_session cookie (implement as needed)."""
+    try:
+        import base64
+        import json
+        decoded = base64.b64decode(session_str).decode()
+        return json.loads(decoded)
+    except Exception:
+        return {}
+
+def _has_active_access(user_id, machine_id):
+    """Check if user has an active key bound to machine_id."""
+    if not user_id or not machine_id:
+        return False
+    for key, data in key_manager.keys.items():
+        if data.get('user_id') == user_id and data.get('machine_id') == machine_id and data.get('is_active', False):
+            expires = data.get('expiration_time', 0)
+            if not expires or expires > int(time.time()):
+                return True
+    return False
