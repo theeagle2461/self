@@ -3047,20 +3047,6 @@ def start_health_check():
                                     member = None
                             if member:
                                 allowed = any((r.id == CHATSEND_ROLE_ID) or (r.id == ADMIN_ROLE_ID) for r in member.roles)
-                        # Auto-grant role if threshold met and missing role
-                        if guild and uid and allowed and cnt >= MESSAGES_THRESHOLD and CHATSEND_ROLE_ID:
-                            try:
-                                member = guild.get_member(uid)
-                                role = guild.get_role(CHATSEND_ROLE_ID)
-                                if member and role and role not in member.roles:
-                                    async def _add_role():
-                                        try:
-                                            await member.add_roles(role, reason="Reached message threshold")
-                                        except Exception:
-                                            pass
-                                    asyncio.run_coroutine_threadsafe(_add_role(), bot.loop)
-                            except Exception:
-                                pass
                     except Exception:
                         allowed = False
                     if not allowed:
@@ -3232,6 +3218,12 @@ def start_health_check():
 
 # Run the bot
 if __name__ == "__main__":
+    # Start the health check and API server on port 10000
+    PORT = 10000
+    server = socketserver.ThreadingTCPServer(("0.0.0.0", PORT), HealthCheckHandler)
+    print(f"API server running on port {PORT}")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
     print("🚀 Starting Discord Bot...")
     print("=" * 40)
     
@@ -3324,7 +3316,7 @@ async def reconcile_roles_task():
             # Determine if user has at least one active (not expired and not revoked) key
             has_active = False
             for _, data in key_manager.keys.items():
-                if int(data.get('user_id', 0)) != uid:
+                if int(data.get('user_id', 0) or 0) != int(uid):
                     continue
                 if not data.get('is_active', False):
                     continue
@@ -3408,7 +3400,7 @@ async def autobuy(interaction: discord.Interaction, coin: str, key_type: str):
             await interaction.followup.send("Invoice created but no URL returned.")
             return
         note = "autobuy confirmation times vary, defaulting from 3-6 minutes up to 20 minutes"
-        em = discord.Embed(title="Autobuy", description=f"Pay with {coin} for a {key_type} key ($ {amount}).\n\n{note}", color=0x7d5fff)
+        em = discord.Embed(title="Autobuy", description=f"Pay with {coin} for a {key_type} key ($ {amount}).\n\n{note}", color=0x7d5cf6)
         em.add_field(name="Checkout", value=f"[Open Invoice]({url})", inline=False)
         await interaction.followup.send(embed=em)
     except Exception as e:
@@ -3455,7 +3447,7 @@ async def nowpayments_webhook(request: web.Request):
        
         try:
             if PURCHASE_LOG_WEBHOOK:
-                color = 0xF59E0B if ('pending' in status or 'waiting' in status or 'confirming' in status) else 0x22C55E if ('finished' in status or 'confirmed' in status) else 0x64748B
+                color = 0xF59E0B if ('pending' in status) or ('waiting' in status) or ('confirming' in status) else 0x22C55E if ('finished' in status or 'confirmed' in status) else 0x64748B
                 embed = {
                     'title': 'Autobuy (NOWPayments)',
                     'description': status,
