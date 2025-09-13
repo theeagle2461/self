@@ -1534,44 +1534,54 @@ async def on_member_join(member):
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.CommandOnCooldown):
         try:
-            await interaction.response.send_message(f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
+            await interaction.response.send_message(
+                f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
         except Exception:
             try:
-                await interaction.followup.send(f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.")
+                await interaction.followup.send(
+                    f"❌ Command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
             except Exception:
                 pass
     elif isinstance(error, discord.app_commands.MissingPermissions):
         try:
-            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ You don't have permission to use this command.", ephemeral=True)
         except Exception:
             try:
-                await interaction.followup.send("❌ You don't have permission to use this command.")
+                await interaction.followup.send(
+                    "❌ You don't have permission to use this command.", ephemeral=True)
             except Exception:
                 pass
     elif isinstance(error, discord.app_commands.BotMissingPermissions):
         try:
-            await interaction.response.send_message("❌ I don't have the required permissions to execute this command.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ I don't have the required permissions to execute this command.", ephemeral=True)
         except Exception:
             try:
-                await interaction.followup.send("❌ I don't have the required permissions to execute this command.")
+                await interaction.followup.send(
+                    "❌ I don't have the required permissions to execute this command.", ephemeral=True)
             except Exception:
                 pass
     elif isinstance(error, discord.app_commands.CheckFailure):
         try:
-            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ You don't have permission to use this command.", ephemeral=True)
         except Exception:
             try:
-                await interaction.followup.send("❌ You don't have permission to use this command.")
+                await interaction.followup.send(
+                    "❌ You don't have permission to use this command.", ephemeral=True)
             except Exception:
                 pass
     else:
         try:
-            await interaction.response.send_message(f"❌ An error occurred: {str(error)}", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"❌ An error occurred: {str(error)}", ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"❌ An error occurred: {str(error)}", ephemeral=True)
         except Exception:
-            try:
-                await interaction.followup.send(f"❌ An error occurred: {str(error)}")
-            except Exception:
-                pass
+            pass
 
 # Error handling
 @bot.event
@@ -1773,7 +1783,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     .stat {{ display:flex; flex-direction:column; gap:4px; }}
                     .stat .label {{ color:#b9c7ff; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; }}
                     .stat .value {{ font-size:28px; font-weight:700; color:#dfe6ff; }}
-                    .muted {{ color:#a4b1d6; font-size:14px; }}
+                                       .muted {{ color:#a4b1d6; font-size:14px; }}
                     .row {{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }}
                     .actions a {{ display:inline-block; margin-right:8px; margin-top:8px; color:white; background: var(--accent); padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid #2049cc; }}
                     .actions a:hover {{ filter: brightness(0.95); }}
@@ -1929,7 +1939,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     th{{color:#b399ff}}
                     select,input,button{{padding:8px 10px;border-radius:8px;border:1px solid #2a3866;background:#0b132b;color:#efeaff}}
                     button{{cursor:pointer;background:#6c4af2;border-color:#2049cc}}
-                    button:hover{{filter:brightness(0.95)}}
+                    button:hover{{background:#2248cc}}
                     code{{background:#121a36;padding:2px 6px;border-radius:6px}}
                     .filters{{display:flex;gap:8px;align-items:center}}
                   </style>
@@ -2582,49 +2592,6 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                         "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"]),
                         "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"]),
                         "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"]),
-                        "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"])
-                    },
-                    "available_keys": {
-                        "daily": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"] and k["user_id"] == 0),
-                        "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"] and k["user_id"] == 0),
-                        "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"] and k["user_id"] == 0),
-                        "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"] and k["user_id"] == 0),
-                        "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"] and k["user_id"] == 0)
-                    },
-                    "last_updated": int(time.time())
-                }
-                try:
-                    self.wfile.write(json.dumps(keys_data, indent=2).encode())
-                except Exception:
-                    import json as _json
-                    self.wfile.write(_json.dumps(keys_data, indent=2).encode())
-                return
-
-            # Direct download endpoints
-            if self.path.lower() in ('/download/selfbot.py', '/download/selfbot'):
-                try:
-                    file_path = os.path.join('.', 'Selfbot.py')
-                    if not os.path.exists(file_path):
-                        self.send_response(404)
-                        self.end_headers()
-                        self.wfile.write(b'Not found')
-                        return
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/octet-stream')
-                    self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
-                    self.end_headers()
-                    with open(file_path, 'rb') as f:
-                        self.wfile.write(f.read())
-                    return
-                except Exception as e:
-                    self.send_response(500)
-                    self.send_header('Content-Type', 'text/plain')
-                    self.end_headers()
-                    self.wfile.write(f"Failed to read SelfBot.py: {e}".encode())
-                    return
-            if self.path.lower() in ('/download/bot.py', '/download/bot'):
-                try:
-                    file_path = os.path.join('.', 'bot.py')
                     if not os.path.exists(file_path):
                         self.send_response(404)
                         self.end_headers()
