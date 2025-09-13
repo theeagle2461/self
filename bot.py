@@ -623,9 +623,14 @@ class KeyManager:
     async def send_webhook_notification(self, key: str, user_id: int, machine_id: str, ip: Optional[str] = None):
         """Send webhook notification when a key is activated"""
         try:
+            import re
             if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE":
                 return
-            
+            # Validate Discord webhook URL format
+            webhook_pattern = r"^https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]+$"
+            if not re.match(webhook_pattern, WEBHOOK_URL):
+                print(f"Invalid webhook URL: {WEBHOOK_URL}")
+                return
             embed = {
                 "title": "🔑 Key Activated",
                 "color": 0x00ff00,
@@ -658,15 +663,12 @@ class KeyManager:
                 ],
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
             }
-            
             payload = {
                 "embeds": [embed]
             }
-            
             response = requests.post(WEBHOOK_URL, json=payload)
             if response.status_code != 204:
                 print(f"Failed to send webhook notification: {response.status_code}")
-                
         except Exception as e:
             print(f"Error sending webhook notification: {e}")
     
@@ -855,26 +857,28 @@ async def on_ready():
     except Exception as e:
         print(f"⚠️ Failed to sync commands in on_ready: {e}")
     # Auto-restore from the most recent JSON attachment in backup channel
-    if AUTO_RESTORE_ON_START and BACKUP_CHANNEL_ID > 0:
-        try:
-            channel = bot.get_channel(BACKUP_CHANNEL_ID)
-            if channel:
-                async for msg in channel.history(limit=50):
-                    if msg.attachments:
-                        for att in msg.attachments:
-                            if att.filename.lower().endswith('.json'):
-                                try:
-                                    b = await att.read()
-                                    payload = json.loads(b.decode('utf-8'))
-                                    if isinstance(payload, dict) and key_manager.restore_from_payload(payload):
-                                        print("♻️ Restored keys from channel backup")
-                                        raise StopAsyncIteration
-                                except Exception:
-                                    pass
-        except StopAsyncIteration:
-            pass
-        except Exception:
-            pass
+        if AUTO_RESTORE_ON_START and BACKUP_CHANNEL_ID > 0:
+            try:
+                channel = bot.get_channel(BACKUP_CHANNEL_ID)
+                if channel:
+                    # Find the most recent JSON attachment
+                    latest_json = None
+                    async for msg in channel.history(limit=50):
+                        if msg.attachments:
+                            for att in msg.attachments:
+                                if att.filename.lower().endswith('.json'):
+                                    if not latest_json or msg.created_at > latest_json[0]:
+                                        latest_json = (msg.created_at, att)
+                    if latest_json:
+                        try:
+                            b = await latest_json[1].read()
+                            payload = json.loads(b.decode('utf-8'))
+                            if isinstance(payload, dict) and key_manager.restore_from_payload(payload):
+                                print("♻️ Restored keys from latest channel backup")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
 @bot.event
 async def on_disconnect():

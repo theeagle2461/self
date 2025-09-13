@@ -70,9 +70,17 @@ def show_login_dialog():
             return
         # Call backend API to validate (replace URL with your backend endpoint)
         try:
+            # Validate SELF_API_URL format
+            url_pattern = r"^https?://[\w\.-]+(:\d+)?/api/activate$"
+            if not re.match(url_pattern, SELF_API_URL):
+                status_label.config(text=f"Invalid backend URL: {SELF_API_URL}")
+                with open("selfbot_login_error.txt", "w") as f:
+                    f.write(f"Invalid backend URL: {SELF_API_URL}")
+                return
             resp = requests.post(
                 SELF_API_URL,
-                data={"key": key, "user_id": user_id, "machine_id": machine_id}
+                data={"key": key, "user_id": user_id, "machine_id": machine_id},
+                timeout=8
             )
             if resp.status_code == 200 and resp.json().get("success"):
                 save_login_info({"key": key, "token": token, "user_id": user_id, "machine_id": machine_id})
@@ -80,7 +88,6 @@ def show_login_dialog():
             else:
                 error_msg = resp.json().get("error", "Login failed.")
                 if "already activated" in error_msg:
-                    # Show user-friendly message and allow retry
                     bound_user = resp.json().get("bound_user_id", user_id)
                     status_label.config(text=f"Key has already been activated and is bound to user ({bound_user})")
                 else:
@@ -91,6 +98,10 @@ def show_login_dialog():
             status_label.config(text="Could not connect to backend. Make sure the bot server is running on port 10000.")
             with open("selfbot_login_error.txt", "w") as f:
                 f.write("Could not connect to backend.")
+        except requests.exceptions.Timeout:
+            status_label.config(text="Backend request timed out.")
+            with open("selfbot_login_error.txt", "w") as f:
+                f.write("Backend request timed out.")
         except Exception as e:
             status_label.config(text=str(e))
             with open("selfbot_login_error.txt", "w") as f:
