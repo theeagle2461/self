@@ -2639,6 +2639,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     return
                 except Exception as e:
                     self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
                     self.end_headers()
                     self.wfile.write(f"Failed to read SelfBot.py: {e}".encode())
                     return
@@ -2659,6 +2660,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     return
                 except Exception as e:
                     self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
                     self.end_headers()
                     self.wfile.write(f"Failed to read bot.py: {e}".encode())
                     return
