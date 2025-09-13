@@ -191,7 +191,7 @@ async def send_status_webhook(event_name: str):
                 {'name':'Guilds','value': str(len(bot.guilds)), 'inline': True},
                 {'name':'Keys','value': str(len(key_manager.keys)), 'inline': True},
             ],
-            'timestamp': datetime.datetime.utcnow().isoformat()
+            'timestamp': datetime.datetime.now(datetime.UTC).isoformat()
         }
         requests.post(url, json={'embeds':[embed]}, timeout=6)
     except Exception:
@@ -656,7 +656,7 @@ class KeyManager:
                         "inline": False
                     }
                 ],
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
             }
             
             payload = {
@@ -706,7 +706,7 @@ class KeyManager:
                         "inline": False
                     }
                 ],
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
             }
             
             payload = {
@@ -2063,7 +2063,8 @@ def start_health_check():
                           </table>
                         </div>
                       </main>
-                    </body></html>
+                    </body>
+                    </html>
                     """
                     self.wfile.write(keys_html.encode())
                     return
@@ -2120,7 +2121,8 @@ def start_health_check():
                           </table>
                         </div>
                       </main>
-                    </body></html>
+                    </body>
+                    </html>
                     """
                     self.wfile.write(html_doc.encode())
                     return
@@ -2165,7 +2167,7 @@ def start_health_check():
                           <td><code>{safe_key}</code></td>
                           <td>{html.escape(r['type'])}</td>
                           <td>{html.escape(r['status'].capitalize())}</td>
-                          <td>{fmt_rem(r['remaining'], False)}</td>
+                          <td>{fmt_rem(r['remaining'], r['not_activated'], r['type'])}</td>
                           <td>{('<t:'+str(r['expires'])+':R>') if r['expires'] else '—'}</td>
                         </tr>
                         """)
@@ -2213,7 +2215,8 @@ def start_health_check():
                           { (f"<p style='margin-top:12px'><a class='nav' href='/backup?user_id={html.escape(user_q)}'>Download backup for this user</a></p>" if user_q else '') }
                         </div>
                       </main>
-                    </body></html>
+                    </body>
+                    </html>
                     """
                     self.send_response(200)
                     self.send_header('Content-type', 'text/html')
@@ -2221,7 +2224,7 @@ def start_health_check():
                     self.wfile.write(page.encode())
                     return
 
-                if self.path.startswith('/backup'):
+                if self.path.startsWith('/backup'):
                     # JSON backup; optional user_id filter
                     parsed = urllib.parse.urlparse(self.path)
                     q = urllib.parse.parse_qs(parsed.query or '')
@@ -2455,6 +2458,7 @@ def start_health_check():
                             import json as _json
                             self.wfile.write(_json.dumps({'error':'missing key'}).encode())
                         return
+
                     info = None
                     if key in key_manager.keys:
                         d = key_manager.keys[key]
@@ -2479,12 +2483,12 @@ def start_health_check():
 
                 if self.path == '/download/selfbot.py':
                     try:
-                        sb_path = os.path.join(os.getcwd(), 'SelfBot.py')
+                        sb_path = os.path.join(os.getcwd(), 'Selfbot.py')
                         with open(sb_path, 'rb') as f:
                             data = f.read()
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/octet-stream')
-                        self.send_header('Content-Disposition', 'attachment; filename="SelfBot.py"')
+                        self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
                         self.send_header('Content-Length', str(len(data)))
                         self.end_headers()
                         self.wfile.write(data)
@@ -2639,7 +2643,7 @@ def start_health_check():
                               </div>
                             </div>
                             <div class='muted' style='margin-top:10px'>
-                              Status: Online • {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} • Bot: {bot.user.name if bot.user else 'Starting...'}
+                              Status: Online • {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')} • Bot: {bot.user.name if bot.user else 'Starting...'}
                             </div>
                           </div>
                         </main>
@@ -3225,38 +3229,6 @@ def start_health_check():
                     self.wfile.write(f"Internal Server Error: {e}".encode())
                 except Exception:
                     pass
-    
-    try:
-        # Use Render's PORT environment variable or default to 8080
-        port = int(os.getenv('PORT', 8080))
-        from http.server import ThreadingHTTPServer
-        server = ThreadingHTTPServer(("", port), HealthCheckHandler)
-        print(f"🌐 Health check server started on port {port}")
-        # Start aiohttp app for webhooks
-        async def _run_aiohttp():
-            app = web.Application()
-            app.router.add_post('/webhook/coinbase-commerce', coinbase_webhook)
-            app.router.add_post('/webhook/nowpayments', nowpayments_webhook)
-            runner = web.AppRunner(app)
-            await runner.setup()
-            site = web.TCPSite(runner, '0.0.0.0', port+1)
-            await site.start()
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        loop.create_task(_run_aiohttp())
-        server.serve_forever()
-    except Exception as e:
-        print(f"❌ Health check server failed: {e}")
-
-# Error handling
-@bot.event
-async def on_error(event, *args, **kwargs):
-    print(f"❌ Error in {event}: {args}")
-
 
 # Run the bot
 if __name__ == "__main__":
@@ -3440,10 +3412,7 @@ async def autobuy(interaction: discord.Interaction, coin: str, key_type: str):
         em.add_field(name="Checkout", value=f"[Open Invoice]({url})", inline=False)
         await interaction.followup.send(embed=em)
     except Exception as e:
-        if interaction.response.is_done():
-            await interaction.followup.send(f"Error: {e}")
-        else:
-            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+        await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 @bot.tree.command(name="sbautobuy", description="Create a crypto invoice (backup command)")
@@ -3483,6 +3452,7 @@ async def nowpayments_webhook(request: web.Request):
         key_type = parts[2] if len(parts) > 2 else ''
         amount = parts[3] if len(parts) > 3 else ''
         # Log pending/confirmed
+       
         try:
             if PURCHASE_LOG_WEBHOOK:
                 color = 0xF59E0B if ('pending' in status or 'waiting' in status or 'confirming' in status) else 0x22C55E if ('finished' in status or 'confirmed' in status) else 0x64748B
@@ -3510,13 +3480,13 @@ async def nowpayments_webhook(request: web.Request):
                     try:
                         chan = guild.get_channel(int(ticket_channel_id))
                         if chan:
-                            member = guild.get_member(int(user_id))
-                            if member:
-                                try:
-                                    await chan.set_permissions(member, read_messages=True, send_messages=True)
-                                except Exception:
-                                    pass
-                            await chan.send(f"<@{user_id}> Your {key_type} key: `{key}`")
+                          member = guild.get_member(int(user_id))
+                          if member:
+                            try:
+                              await chan.set_permissions(member, read_messages=True, send_messages=True)
+                            except Exception:
+                              pass
+                          await chan.send(f"<@{user_id}> Your {key_type} key: `{key}`")
                     except Exception:
                         pass
                 try:
@@ -3655,7 +3625,7 @@ async def autobuy_text(ctx: commands.Context, coin: str = None, key_type: str = 
             await ctx.reply("Invoice created but no URL returned.")
             return
         note = "autobuy confirmation times vary, defaulting from 3-6 minutes up to 20 minutes"
-        em = discord.Embed(title="Autobuy", description=f"Pay with {coin} for a {key_type} key ($ {amount}).\n\n{note}", color=0x7d5fff)
+        em = discord.Embed(title="Autobuy", description=f"Pay with {coin} for a {key_type} key ($ {amount}).\n\n{note}", color=0x7d5cf6)
         em.add_field(name="Checkout", value=f"[Open Invoice]({url})", inline=False)
         await ctx.reply(embed=em)
     except Exception as e:

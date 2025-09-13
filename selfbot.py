@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import font, messagebox, filedialog, simpledialog
 import threading
@@ -71,7 +70,7 @@ def show_login_dialog():
         # Call backend API to validate (replace URL with your backend endpoint)
         try:
             resp = requests.post(
-                os.getenv("SELF_API_URL", "http://localhost:10000/api/activate"),
+                SELF_API_URL,
                 data={"key": key, "user_id": user_id, "machine_id": machine_id}
             )
             if resp.status_code == 200 and resp.json().get("success"):
@@ -85,17 +84,28 @@ def show_login_dialog():
                     status_label.config(text=f"Key has already been activated and is bound to user ({bound_user})")
                 else:
                     status_label.config(text=error_msg)
+                with open("selfbot_login_error.txt", "w") as f:
+                    f.write(error_msg)
         except requests.exceptions.ConnectionError:
             status_label.config(text="Could not connect to backend. Make sure the bot server is running on port 10000.")
+            with open("selfbot_login_error.txt", "w") as f:
+                f.write("Could not connect to backend.")
         except Exception as e:
             status_label.config(text=str(e))
+            with open("selfbot_login_error.txt", "w") as f:
+                f.write(str(e))
+    tk.Button(root, text="Login", command=do_login, font=font1, bg="#ff79c6", fg="#282a36").pack(pady=12)
+    root.mainloop()
+
+show_login_dialog()
 login_info = load_login_info()
 if not login_info or not login_info.get("key") or not login_info.get("user_id"):
-    show_login_dialog()
-    login_info = load_login_info()
-    if not login_info:
+    try:
+        with open("selfbot_login_error.txt", "r") as f:
+            print(f"Login failed. Reason: {f.read().strip()}")
+    except Exception:
         print("Login failed. Exiting.")
-        sys.exit(1)
+    sys.exit(1)
 
 # Now, login_info contains: key, token, user_id, machine_id
 
