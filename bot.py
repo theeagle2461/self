@@ -1783,7 +1783,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     .stat {{ display:flex; flex-direction:column; gap:4px; }}
                     .stat .label {{ color:#b9c7ff; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; }}
                     .stat .value {{ font-size:28px; font-weight:700; color:#dfe6ff; }}
-                                       .muted {{ color:#a4b1d6; font-size:14px; }}
+                                                          .muted {{ color:#a4b1d6; font-size:14px; }}
                     .row {{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }}
                     .actions a {{ display:inline-block; margin-right:8px; margin-top:8px; color:white; background: var(--accent); padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid #2049cc; }}
                     .actions a:hover {{ filter: brightness(0.95); }}
@@ -2197,7 +2197,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_q = q.get('user_id', [None])[0]
                 machine_q = q.get('machine_id', [None])[0]
                 try:
-                    uid = int(user_q) if user_q is not None : None
+                    uid = int(user_q) if user_q is not None else None
                 except Exception:
                     uid = None
 
