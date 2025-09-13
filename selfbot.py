@@ -12,6 +12,7 @@ from io import BytesIO
 from PIL import Image, ImageTk
 import uuid
 import os
+SELF_API_URL = os.getenv("SELF_API_URL", "http://localhost:10000/api/activate")
 
 
 print("Starting selfbot...", file=sys.stderr)
