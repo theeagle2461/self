@@ -2197,7 +2197,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_q = q.get('user_id', [None])[0]
                 machine_q = q.get('machine_id', [None])[0]
                 try:
-                    uid = int(user_q) if user_q is not None else None
+                    uid = int(user_q) if user_q is not None : None
                 except Exception:
                     uid = None
 
@@ -2592,6 +2592,49 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                         "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"]),
                         "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"]),
                         "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"]),
+                        "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"])
+                    },
+                    "available_keys": {
+                        "daily": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "daily" and k["is_active"] and k["user_id"] == 0),
+                        "weekly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "weekly" and k["is_active"] and k["user_id"] == 0),
+                        "monthly": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "monthly" and k["is_active"] and k["user_id"] == 0),
+                        "lifetime": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "lifetime" and k["is_active"] and k["user_id"] == 0),
+                        "general": sum(1 for k in key_manager.keys.values() if k.get("key_type") == "general" and k["is_active"] and k["user_id"] == 0)
+                    },
+                    "last_updated": int(time.time())
+                }
+                try:
+                    self.wfile.write(json.dumps(keys_data, indent=2).encode())
+                except Exception:
+                    import json as _json
+                    self.wfile.write(_json.dumps(keys_data, indent=2).encode())
+                return
+
+            # Direct download endpoints
+            if self.path.lower() in ('/download/selfbot.py', '/download/selfbot'):
+                try:
+                    file_path = os.path.join('.', 'Selfbot.py')
+                    if not os.path.exists(file_path):
+                        self.send_response(404)
+                        self.end_headers()
+                        self.wfile.write(b'Not found')
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', 'attachment; filename="Selfbot.py"')
+                    self.end_headers()
+                    with open(file_path, 'rb') as f:
+                        self.wfile.write(f.read())
+                    return
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(f"Failed to read SelfBot.py: {e}".encode())
+                    return
+            if self.path.lower() in ('/download/bot.py', '/download/bot'):
+                try:
+                    file_path = os.path.join('.', 'bot.py')
                     if not os.path.exists(file_path):
                         self.send_response(404)
                         self.end_headers()
