@@ -3137,6 +3137,15 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
             self.wfile.write(f"Internal Server Error: {e}".encode())
+if __name__ == "__main__":
+    # Start health check server in a background thread
+    PORT = 10000
+    def run_health_server():
+        with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), HealthCheckHandler) as server:
+            print(f"🌐 Health check server started on port {PORT}")
+            server.serve_forever()
+    threading.Thread(target=run_health_server, daemon=True).start()
 
-
-
+    # Start Discord bot (this keeps the process alive)
+    print("🚀 Starting Discord Bot...")
+    bot.run(BOT_TOKEN)
