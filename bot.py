@@ -2198,17 +2198,17 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_q = q.get('user_id', [None])[0]
                 machine_q = q.get('machine_id', [None])[0]
                 try:
-                    uid = int(user_q) if user_q is not None else None
+                    user_id = int(user_q) if user_q is not None else None
                 except Exception:
-                    uid = None
+                    user_id = None
 
                 now_ts = int(time.time())
                 active_items = []
                 expired_count = 0
                 bound_match = False
-                if uid is not None:
+                if user_id is not None:
                     for key, data in key_manager.keys.items():
-                        if data.get('user_id') != uid:
+                        if data.get('user_id') != user_id:
                             continue
                         expires = data.get('expiration_time', 0) or 0
                         if data.get('is_active', False) and (expires == 0 or expires > now_ts):
@@ -2223,7 +2223,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                             if machine_q:
                                 mid = str(data.get('machine_id') or '')
                                 # Accept exact machine binding OR legacy slash-activation binding (machine_id == user_id)
-                                if (mid and str(machine_q) == mid) or (mid and str(uid) == mid):
+                                if (mid and str(machine_q) == mid) or (mid and str(user_id) == mid):
                                     bound_match = True
                         else:
                             if expires and expires <= now_ts:
@@ -2234,13 +2234,13 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 has_role = False
                 try:
                     guild = bot.get_guild(GUILD_ID)
-                    if guild and uid:
-                        member = guild.get_member(uid)
+                    if guild and user_id:
+                        member = guild.get_member(user_id)
                         if member is None:
                             # Fallback to fetching the member if not in cache
                             async def _fetch_member():
                                 try:
-                                    return await guild.fetch_member(uid)
+                                    return await guild.fetch_member(user_id)
                                 except Exception:
                                     return None
                             fut = asyncio.run_coroutine_threadsafe(_fetch_member(), bot.loop)
@@ -2255,7 +2255,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 # Access should depend on active key (and optional machine binding)
                 should_have_access = has_active_key and (bound_match or not machine_q)
                 resp = {
-                    'user_id': uid,
+                    'user_id': user_id,
                     'role_id': ROLE_ID,
                     'guild_id': GUILD_ID,
                     'has_active_key': has_active_key,
@@ -2563,7 +2563,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_id_str = (data.get('user_id', [None])[0])
                 new_machine = (data.get('machine_id', [''])[0])
                 try:
-                    user_id_val = int(user_id_str) if user_id_str is not None : None
+                    user_id_val = int(user_id_str) if user_id_str is not None else None
                 except Exception:
                     user_id_val = None
                 resp = {}
