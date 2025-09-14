@@ -25,6 +25,7 @@ import requests
 import urllib.parse
 import html
 import io
+import aiohttp
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -1783,7 +1784,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     .stat {{ display:flex; flex-direction:column; gap:4px; }}
                     .stat .label {{ color:#b9c7ff; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; }}
                     .stat .value {{ font-size:28px; font-weight:700; color:#dfe6ff; }}
-                                                          .muted {{ color:#a4b1d6; font-size:14px; }}
+                    .muted {{ color:#a4b1d6; font-size:14px; }}
                     .row {{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }}
                     .actions a {{ display:inline-block; margin-right:8px; margin-top:8px; color:white; background: var(--accent); padding:10px 12px; border-radius:10px; text-decoration:none; border:1px solid #2049cc; }}
                     .actions a:hover {{ filter: brightness(0.95); }}
@@ -2197,7 +2198,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_q = q.get('user_id', [None])[0]
                 machine_q = q.get('machine_id', [None])[0]
                 try:
-                    uid = int(user_q) if user_q is not None else None
+                    uid = int(user_q) if user_q is not None : None
                 except Exception:
                     uid = None
 
@@ -2207,7 +2208,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 bound_match = False
                 if uid is not None:
                     for key, data in key_manager.keys.items():
-                        if data.get('user_id', 0) != uid:
+                        if data.get('user_id') != uid:
                             continue
                         expires = data.get('expiration_time', 0) or 0
                         if data.get('is_active', False) and (expires == 0 or expires > now_ts):
@@ -2643,6 +2644,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/octet-stream')
                     self.send_header('Content-Disposition', 'attachment; filename="bot.py"')
+                    self.send_header('Content-Length', str(len(data)))
                     self.end_headers()
                     with open(file_path, 'rb') as f:
                         self.wfile.write(f.read())
@@ -2775,7 +2777,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_id_str = (data.get('user_id', [None])[0])
                 new_machine = (data.get('machine_id', [''])[0])
                 try:
-                    user_id_val = int(user_id_str) if user_id_str is not None else None
+                    user_id_val = int(user_id_str) if user_id_str is not None : None
                 except Exception:
                     user_id_val = None
                 resp = {}
@@ -3178,6 +3180,99 @@ def _has_active_access(user_id, machine_id):
             if not expires or expires > int(time.time()):
                 return True
     return False
+
+ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
+
+@bot.tree.command(name="autobuy", description="Buy a key with crypto (NOWPayments)")
+@app_commands.describe(plan="Choose plan: daily, weekly, monthly, lifetime", crypto="Choose crypto")
+async def autobuy(
+    interaction: discord.Interaction,
+    plan: str,
+    crypto: str
+):
+    plans = {
+        "daily": {"days": 1, "usd": 2.00},
+        "weekly": {"days": 7, "usd": 8.00},
+        "monthly": {"days": 30, "usd": 20.00},
+        "lifetime": {"days": 365, "usd": 99.00}
+    }
+    plan = plan.lower()
+    crypto = crypto.upper()
+    if plan not in plans:
+        await interaction.response.send_message("❌ Invalid plan. Choose: daily, weekly, monthly, lifetime.", ephemeral=True)
+        return
+    if crypto not in ALLOWED_PAY_CURRENCIES:
+        await interaction.response.send_message(f"❌ Invalid crypto. Choose: {', '.join(ALLOWED_PAY_CURRENCIES)}", ephemeral=True)
+        return
+
+    # Fetch minimum amount for selected crypto from NOWPayments API
+    min_amount = None
+    min_usd = None
+    try:
+        headers = {"x-api-key": NWP_API_KEY}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://api.nowpayments.io/v1/min-amount?currency_from={crypto}&currency_to=usd", headers=headers) as resp:
+                data = await resp.json()
+                min_amount = float(data.get("min_amount", 0))
+                min_usd = float(data.get("min_amount_by_fiat", 0))
+    except Exception:
+        min_amount = None
+        min_usd = None
+
+    # Create invoice via NOWPayments API
+    invoice_url = None
+    try:
+        headers = {"x-api-key": NWP_API_KEY, "Content-Type": "application/json"}
+        payload = {
+            "price_amount": plans[plan]["usd"],
+            "price_currency": "usd",
+            "pay_currency": crypto,
+            "order_id": f"{interaction.user.id}-{plan}-{crypto}-{int(time.time())}",
+            "ipn_callback_url": PUBLIC_URL + "/nowpayments-ipn" if PUBLIC_URL else "",
+            "order_description": f"{plan.capitalize()} key for {interaction.user.id}"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://api.nowpayments.io/v1/invoice", headers=headers, json=payload) as resp:
+                data = await resp.json()
+                invoice_url = data.get("invoice_url")
+    except Exception:
+        invoice_url = None
+
+    warning = ""
+    if min_amount and min_usd:
+        warning = f":bangbang: **Minimum Send for {crypto}: {min_amount} {crypto} (~${min_usd:.2f} USD)**"
+
+    embed = discord.Embed(
+        title="Autobuy Key",
+        description=f"**Plan:** {plan.capitalize()} ({plans[plan]['days']} days)\n**Crypto:** {crypto}\n{warning}",
+        color=0x22C55E
+    )
+    if invoice_url:
+        embed.add_field(name="Pay Invoice", value=f"[Click here to pay]({invoice_url})", inline=False)
+        embed.set_footer(text="After payment, your key will be delivered automatically.")
+    else:
+        embed.add_field(name="Error", value="Failed to create invoice. Try again later.", inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# --- NOWPayments IPN handler (add to your webhook server) ---
+# When payment is confirmed, generate key and DM user
+async def handle_nowpayments_ipn(data):
+    try:
+        if data.get("payment_status") == "confirmed":
+            order_id = data.get("order_id")
+            user_id, plan, crypto, _ = order_id.split("-", 3)
+            user_id = int(user_id)
+            duration_days = {
+                "daily": 1, "weekly": 7, "monthly": 30, "lifetime": 365
+            }.get(plan, 30)
+            key = key_manager.generate_key(user_id, None, duration_days)
+            # DM user the key
+            user = await bot.fetch_user(user_id)
+            if user:
+                await user.send(f"✅ Your {plan} key: `{key}`\nThank you for your payment!")
+    except Exception as e:
+        print(f"NOWPayments IPN error: {e}")
 
 if __name__ == "__main__":
     PORT = int(os.getenv("PORT", "10000"))
