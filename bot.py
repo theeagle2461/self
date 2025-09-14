@@ -3143,25 +3143,38 @@ async def nowpayments_ipn(request: web.Request):
 # <-- DO NOT INDENT BELOW THIS LINE
 
 if __name__ == "__main__":
-    # Start aiohttp web server for NOWPayments IPN
     import asyncio
     from aiohttp import web
 
     app = web.Application()
+
+    # Add your NOWPayments IPN route
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
+
+    # Example: Add a dashboard route
+    async def dashboard(request):
+        return web.Response(text="Dashboard HTML here", content_type="text/html")
+    app.router.add_get("/", dashboard)
+
+    async def download_bot(request):
+        try:
+            with open("bot.py", "rb") as f:
+                data = f.read()
+            return web.Response(body=data, headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Disposition": 'attachment; filename="bot.py"'
+            })
+        except Exception as e:
+            return web.Response(status=500, text=f"Failed to read bot.py: {e}")
+    app.router.add_get("/download/bot.py", download_bot)
+
+    # ...add more routes as needed...
+
     runner = web.AppRunner(app)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(runner.setup())
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
     loop.run_until_complete(site.start())
-
-    # Start the HTTP server in a background thread
-    def run_server():
-        PORT = int(os.getenv("PORT", 10000))
-        with socketserver.ThreadingTCPServer(("", PORT), HealthCheckHandler) as httpd:
-            print(f"🌐 HTTP server running on port {PORT}")
-            httpd.serve_forever()
-    threading.Thread(target=run_server, daemon=True).start()
 
     # Start the Discord bot
     bot.run(BOT_TOKEN)
