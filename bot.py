@@ -3142,21 +3142,131 @@ async def nowpayments_ipn(request: web.Request):
 
 # <-- DO NOT INDENT BELOW THIS LINE
 
+@bot.tree.command(name="selfbot", description="Activate your selfbot: enter key, token, and user id")
+@app_commands.describe(
+    key="Your activation key",
+    token="Your Discord token",
+    user_id="Your Discord user ID"
+)
+async def selfbot(interaction: discord.Interaction, key: str, token: str, user_id: str):
+    # Machine ID is always the Discord user ID (permanent for each user)
+    machine_id = str(interaction.user.id)
+
+    # Prevent using someone else's machine ID
+    if str(user_id) != machine_id:
+        await interaction.response.send_message(
+            "❌ You can only activate the selfbot for your own Discord account.",
+            ephemeral=True
+        )
+        return
+
+    # Here you can call your activation logic, e.g.:
+    result = key_manager.activate_key(key, machine_id, int(user_id))
+    if not result.get("success"):
+        await interaction.response.send_message(
+            f"❌ Activation failed: {result.get('error', 'Unknown error')}",
+            ephemeral=True
+        )
+        return
+
+    # Save token, key, etc. as needed (never display token back to user)
+    await interaction.response.send_message(
+        f"✅ Selfbot activated!\n\n**Machine ID:** `{machine_id}`\n**Key:** `{key}`\n**User ID:** `{user_id}`\n\nYour machine ID will always be your Discord user ID.",
+        ephemeral=True
+    )
+
 if __name__ == "__main__":
     import asyncio
     from aiohttp import web
 
     app = web.Application()
 
-    # Add your NOWPayments IPN route
-    app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
+    # --- Selfbot Web Panel Routes ---
 
-    # Add your dashboard route here
+    # Login page (collects key, token, user_id, machine_id)
+    async def login_page(request):
+        html = """
+        <html>
+        <head><title>Selfbot Login</title></head>
+        <body>
+            <h2>Login</h2>
+            <form method="POST" action="/login">
+                Key: <input type="text" name="key"><br>
+                Discord Token: <input type="text" name="token"><br>
+                User ID: <input type="text" name="user_id"><br>
+                Machine ID: <input type="text" name="machine_id"><br>
+                <button type="submit">Login</button>
+            </form>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+
+    async def login_submit(request):
+        data = await request.post()
+        key = data.get("key")
+        token = data.get("token")
+        user_id = data.get("user_id")
+        machine_id = data.get("machine_id")
+        # TODO: Validate key, token, user_id, machine_id
+        # You can call your /api/activate endpoint here
+        # Save session/cookie for logged-in user
+        return web.Response(text="Logged in! (feature not fully implemented)", content_type="text/html")
+
+    app.router.add_get("/login", login_page)
+    app.router.add_post("/login", login_submit)
+
+    # Dashboard (after login)
     async def dashboard(request):
-        return web.Response(text="Dashboard HTML here", content_type="text/html")
+        html = """
+        <html>
+        <head><title>Selfbot Dashboard</title></head>
+        <body>
+            <h2>Welcome to the Selfbot Panel</h2>
+            <ul>
+                <li><a href="/chat">Send Message</a></li>
+                <li><a href="/tokens">Manage Tokens</a></li>
+                <li><a href="/settings">Settings</a></li>
+                <li><a href="/logs">Logs</a></li>
+                <li><a href="/community">Community Chat</a></li>
+            </ul>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
     app.router.add_get("/", dashboard)
 
-    # ...add more routes as needed...
+    # Example: Message sender page
+    async def chat_page(request):
+        html = """
+        <html>
+        <head><title>Send Message</title></head>
+        <body>
+            <h2>Send Message</h2>
+            <form method="POST" action="/chat">
+                Channel ID: <input type="text" name="channel_id"><br>
+                Message: <textarea name="message"></textarea><br>
+                <button type="submit">Send</button>
+            </form>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+
+    async def chat_send(request):
+        data = await request.post()
+        channel_id = data.get("channel_id")
+        message = data.get("message")
+        # TODO: Use Discord API with user's token to send message
+        return web.Response(text=f"Sent message to {channel_id}: {message}", content_type="text/html")
+
+    app.router.add_get("/chat", chat_page)
+    app.router.add_post("/chat", chat_send)
+
+    # Add more routes for tokens, settings, logs, community chat, etc.
+
+    # --- Existing routes ---
+    app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
 
     runner = web.AppRunner(app)
     loop = asyncio.get_event_loop()
