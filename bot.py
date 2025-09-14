@@ -2198,7 +2198,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 user_q = q.get('user_id', [None])[0]
                 machine_q = q.get('machine_id', [None])[0]
                 try:
-                    uid = int(user_q) if user_q is not None : None
+                    uid = int(user_q) if user_q is not None else None
                 except Exception:
                     uid = None
 
@@ -2637,10 +2637,13 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     file_path = os.path.join('.', 'bot.py')
                     if not os.path.exists(file_path):
-                        self.send_response(404)
-                        self.end_headers()
-                        self.wfile.write(b'Not found')
-                        return
+    self.send_response(404)
+    self.end_headers()
+    self.wfile.write(b'Not found')
+    return
+
+with open(file_path, 'rb') as f:
+    data = f.read()
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/octet-stream')
                     self.send_header('Content-Disposition', 'attachment; filename="bot.py"')
