@@ -3059,6 +3059,7 @@ class ConfirmInvoiceView(ui.View):
 
         # Create invoice via NOWPayments API
         invoice_url = None
+        error_msg = None
         try:
             headers = {"x-api-key": NWP_API_KEY, "Content-Type": "application/json"}
             payload = {
@@ -3073,8 +3074,13 @@ class ConfirmInvoiceView(ui.View):
                 async with session.post("https://api.nowpayments.io/v1/invoice", headers=headers, json=payload) as resp:
                     data = await resp.json()
                     invoice_url = data.get("invoice_url")
-        except Exception:
+                    if not invoice_url:
+                        error_msg = data.get("message") or str(data)
+                        print("NOWPayments error:", data)
+        except Exception as e:
             invoice_url = None
+            error_msg = str(e)
+            print("NOWPayments exception:", e)
 
         embed = discord.Embed(
             title="Autobuy Invoice",
@@ -3085,7 +3091,7 @@ class ConfirmInvoiceView(ui.View):
             embed.add_field(name="Pay Invoice", value=f"[Click here to pay]({invoice_url})", inline=False)
             embed.set_footer(text="After payment, your key will be delivered automatically.")
         else:
-            embed.add_field(name="Error", value="Failed to create invoice. Try again later.", inline=False)
+            embed.add_field(name="Error", value=f"Failed to create invoice. {error_msg or 'Try again later.'}", inline=False)
 
         await interaction.response.edit_message(embed=embed, view=None)
 
@@ -3102,9 +3108,53 @@ async def autobuy(interaction: discord.Interaction):
         ephemeral=True
     )
 
+async def nowpayments_ipn(request: web.Request):
+    try:
+        # Validate IPN secret
+        ipn_secret = request.headers.get("x-nowpayments-sig", "")
+        if NWP_IPN_SECRET and ipn_secret != NWP_IPN_SECRET:
+            return web.Response(status=403, text="Invalid IPN secret")
+        data = await request.json()
+        status = data.get("payment_status")
+        order_id = data.get("order_id")
+        if status == "confirmed" and order_id:
+            # Parse order_id: "{user_id}-{plan}-{crypto}-{timestamp}"
+            try:
+                user_id_str, plan, crypto, _ = order_id.split("-", 3)
+                user_id = int(user_id_str)
+                plan_info = PLANS.get(plan)
+                if not plan_info:
+                    return web.Response(text="Unknown plan")
+                duration_days = plan_info["days"]
+                # For lifetime, set to 3650 days (10 years) or whatever you want for "infinite"
+                if duration_days is None:
+                    duration_days = 3650
+                key = key_manager.generate_key(user_id, None, duration_days)
+                # DM the user their key
+                user = await bot.fetch_user(user_id)
+                if user:
+                    await user.send(f"✅ Your {plan_info['label']} key: `{key}`\nThank you for your payment!")
+            except Exception as e:
+                print("NOWPayments IPN error:", e)
+        return web.Response(text="ok")
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
+
 # <-- DO NOT INDENT BELOW THIS LINE
 
 if __name__ == "__main__":
+    # Start aiohttp web server for NOWPayments IPN
+    import asyncio
+    from aiohttp import web
+
+    app = web.Application()
+    app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
+    runner = web.AppRunner(app)
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(runner.setup())
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
+    loop.run_until_complete(site.start())
+
     # Start the HTTP server in a background thread
     def run_server():
         PORT = int(os.getenv("PORT", 10000))
