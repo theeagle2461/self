@@ -3156,18 +3156,6 @@ if __name__ == "__main__":
         return web.Response(text="Dashboard HTML here", content_type="text/html")
     app.router.add_get("/", dashboard)
 
-    async def download_bot(request):
-        try:
-            with open("bot.py", "rb") as f:
-                data = f.read()
-            return web.Response(body=data, headers={
-                "Content-Type": "application/octet-stream",
-                "Content-Disposition": 'attachment; filename="bot.py"'
-            })
-        except Exception as e:
-            return web.Response(status=500, text=f"Failed to read bot.py: {e}")
-    app.router.add_get("/download/bot.py", download_bot)
-
     # ...add more routes as needed...
 
     runner = web.AppRunner(app)
