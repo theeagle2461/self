@@ -7,7 +7,7 @@ except Exception:  # pragma: no cover
         audioop = None
 
 import discord
-from discord import app_commands
+from discord import app_commands, ui
 from discord.ext import commands
 from discord.ext import tasks
 import json
