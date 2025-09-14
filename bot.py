@@ -3101,4 +3101,3 @@ async def autobuy(interaction: discord.Interaction):
         view=PlanSelectView(),
         ephemeral=True
     )
-```
