@@ -3151,7 +3151,7 @@ if __name__ == "__main__":
     # Add your NOWPayments IPN route
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
 
-    # Example: Add a dashboard route
+    # Add your dashboard route here
     async def dashboard(request):
         return web.Response(text="Dashboard HTML here", content_type="text/html")
     app.router.add_get("/", dashboard)
