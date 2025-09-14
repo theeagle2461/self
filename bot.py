@@ -2375,13 +2375,8 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
                 key = (q.get('key', [None])[0])
                 if not key:
                     self.send_response(400)
-                    self.send_header('Content-Type', 'application/json')
                     self.end_headers()
-                    try:
-                        self.wfile.write(json.dumps({'error':'missing key'}).encode())
-                    except Exception:
-                        import json as _json
-                        self.wfile.write(_json.dumps({'error':'missing key'}).encode())
+                    self.wfile.write(b'Missing key')
                     return
 
                 info = None
@@ -2968,105 +2963,142 @@ def _has_active_access(user_id, machine_id):
     return False
 
 ALLOWED_PAY_CURRENCIES = ["BTC", "ETH", "LTC", "USDC", "USDTERC20", "USDTTRC20"]
+PLANS = {
+    "daily": {"label": "Daily ($3)", "days": 1, "usd": 3.00},
+    "weekly": {"label": "Weekly ($10)", "days": 7, "usd": 10.00},
+    "monthly": {"label": "Monthly ($20)", "days": 30, "usd": 20.00},
+    "lifetime": {"label": "Lifetime ($50)", "days": None, "usd": 50.00},  # None = infinite
+}
 
-@bot.tree.command(name="autobuy", description="Buy a key with crypto (NOWPayments)")
-@app_commands.describe(plan="Choose plan: daily, weekly, monthly, lifetime", crypto="Choose crypto")
-async def autobuy(
-    interaction: discord.Interaction,
-    plan: str,
-    crypto: str
-):
-    plans = {
-        "daily": {"days": 1, "usd": 2.00},
-        "weekly": {"days": 7, "usd": 8.00},
-        "monthly": {"days": 30, "usd": 20.00},
-        "lifetime": {"days": 365, "usd": 99.00}
-    }
-    plan = plan.lower()
-    crypto = crypto.upper()
-    if plan not in plans:
-        await interaction.response.send_message("❌ Invalid plan. Choose: daily, weekly, monthly, lifetime.", ephemeral=True)
-        return
-    if crypto not in ALLOWED_PAY_CURRENCIES:
-        await interaction.response.send_message(f"❌ Invalid crypto. Choose: {', '.join(ALLOWED_PAY_CURRENCIES)}", ephemeral=True)
-        return
+class PlanSelect(ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=PLANS[k]["label"], value=k)
+            for k in PLANS
+        ]
+        super().__init__(placeholder="Choose a plan...", min_values=1, max_values=1, options=options)
 
-    # Fetch minimum amount for selected crypto from NOWPayments API
-    min_amount = None
-    min_usd = None
-    try:
-        headers = {"x-api-key": NWP_API_KEY}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.nowpayments.io/v1/min-amount?currency_from={crypto}&currency_to=usd", headers=headers) as resp:
-                data = await resp.json()
-                min_amount = float(data.get("min_amount", 0))
-                min_usd = float(data.get("min_amount_by_fiat", 0))
-    except Exception:
+    async def callback(self, interaction: discord.Interaction):
+        plan = self.values[0]
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(
+                title="Select Crypto",
+                description="Choose the cryptocurrency you want to pay with.",
+                color=0x22C55E
+            ),
+            view=CryptoSelectView(plan)
+        )
+
+class CryptoSelect(ui.Select):
+    def __init__(self, plan):
+        options = [
+            discord.SelectOption(label=cur, value=cur)
+            for cur in ALLOWED_PAY_CURRENCIES
+        ]
+        super().__init__(placeholder="Choose a cryptocurrency...", min_values=1, max_values=1, options=options)
+        self.plan = plan
+
+    async def callback(self, interaction: discord.Interaction):
+        crypto = self.values[0]
+        plan = self.plan
+        # Fetch minimum amount for selected crypto from NOWPayments API
         min_amount = None
         min_usd = None
+        try:
+            headers = {"x-api-key": NWP_API_KEY}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"https://api.nowpayments.io/v1/min-amount?currency_from={crypto}&currency_to=usd", headers=headers) as resp:
+                    data = await resp.json()
+                    min_amount = float(data.get("min_amount", 0))
+                    min_usd = float(data.get("min_amount_by_fiat", 0))
+        except Exception:
+            min_amount = None
+            min_usd = None
 
-    # Create invoice via NOWPayments API
-    invoice_url = None
-    try:
-        headers = {"x-api-key": NWP_API_KEY, "Content-Type": "application/json"}
-        payload = {
-            "price_amount": plans[plan]["usd"],
-            "price_currency": "usd",
-            "pay_currency": crypto,
-            "order_id": f"{interaction.user.id}-{plan}-{crypto}-{int(time.time())}",
-            "ipn_callback_url": PUBLIC_URL + "/nowpayments-ipn" if PUBLIC_URL else "",
-            "order_description": f"{plan.capitalize()} key for {interaction.user.id}"
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.nowpayments.io/v1/invoice", headers=headers, json=payload) as resp:
-                data = await resp.json()
-                invoice_url = data.get("invoice_url")
-    except Exception:
+        warning = ""
+        if min_amount and min_usd:
+            warning = f":bangbang: **Minimum Send for {crypto}: {min_amount} {crypto} (~${min_usd:.2f} USD)**"
+
+        plan_label = PLANS[plan]["label"]
+        embed = discord.Embed(
+            title="Confirm Purchase",
+            description=f"**Plan:** {plan_label}\n**Crypto:** {crypto}\n{warning}\n\nPlease confirm you understand the minimum send requirement.",
+            color=0x22C55E
+        )
+        await interaction.response.edit_message(
+            embed=embed,
+            view=ConfirmInvoiceView(plan, crypto, min_amount, min_usd)
+        )
+
+class PlanSelectView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(PlanSelect())
+
+class CryptoSelectView(ui.View):
+    def __init__(self, plan):
+        super().__init__(timeout=120)
+        self.add_item(CryptoSelect(plan))
+
+class ConfirmInvoiceView(ui.View):
+    def __init__(self, plan, crypto, min_amount, min_usd):
+        super().__init__(timeout=120)
+        self.plan = plan
+        self.crypto = crypto
+        self.min_amount = min_amount
+        self.min_usd = min_usd
+
+    @ui.button(label="Acknowledge & Get Invoice", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+        plan = self.plan
+        crypto = self.crypto
+        plan_info = PLANS[plan]
+        price = plan_info["usd"]
+        duration_days = plan_info["days"]
+
+        # Create invoice via NOWPayments API
         invoice_url = None
+        try:
+            headers = {"x-api-key": NWP_API_KEY, "Content-Type": "application/json"}
+            payload = {
+                "price_amount": price,
+                "price_currency": "usd",
+                "pay_currency": crypto,
+                "order_id": f"{interaction.user.id}-{plan}-{crypto}-{int(time.time())}",
+                "ipn_callback_url": PUBLIC_URL + "/nowpayments-ipn" if PUBLIC_URL else "",
+                "order_description": f"{plan_info['label']} key for {interaction.user.id}"
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://api.nowpayments.io/v1/invoice", headers=headers, json=payload) as resp:
+                    data = await resp.json()
+                    invoice_url = data.get("invoice_url")
+        except Exception:
+            invoice_url = None
 
-    warning = ""
-    if min_amount and min_usd:
-        warning = f":bangbang: **Minimum Send for {crypto}: {min_amount} {crypto} (~${min_usd:.2f} USD)**"
+        embed = discord.Embed(
+            title="Autobuy Invoice",
+            description=f"**Plan:** {plan_info['label']}\n**Crypto:** {crypto}",
+            color=0x22C55E
+        )
+        if invoice_url:
+            embed.add_field(name="Pay Invoice", value=f"[Click here to pay]({invoice_url})", inline=False)
+            embed.set_footer(text="After payment, your key will be delivered automatically.")
+        else:
+            embed.add_field(name="Error", value="Failed to create invoice. Try again later.", inline=False)
 
-    embed = discord.Embed(
-        title="Autobuy Key",
-        description=f"**Plan:** {plan.capitalize()} ({plans[plan]['days']} days)\n**Crypto:** {crypto}\n{warning}",
-        color=0x22C55E
+        await interaction.response.edit_message(embed=embed, view=None)
+
+@bot.tree.command(name="autobuy", description="Buy a key with crypto (NOWPayments)")
+async def autobuy(interaction: discord.Interaction):
+    """Start the autobuy process with dropdowns and confirmation."""
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="Autobuy Key",
+            description="Select the plan you want to purchase.",
+            color=0x22C55E
+        ),
+        view=PlanSelectView(),
+        ephemeral=True
     )
-    if invoice_url:
-        embed.add_field(name="Pay Invoice", value=f"[Click here to pay]({invoice_url})", inline=False)
-        embed.set_footer(text="After payment, your key will be delivered automatically.")
-    else:
-        embed.add_field(name="Error", value="Failed to create invoice. Try again later.", inline=False)
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# --- NOWPayments IPN handler (add to your webhook server) ---
-# When payment is confirmed, generate key and DM user
-async def handle_nowpayments_ipn(data):
-    try:
-        if data.get("payment_status") == "confirmed":
-            order_id = data.get("order_id")
-            user_id, plan, crypto, _ = order_id.split("-", 3)
-            user_id = int(user_id)
-            duration_days = {
-                "daily": 1, "weekly": 7, "monthly": 30, "lifetime": 365
-            }.get(plan, 30)
-            key = key_manager.generate_key(user_id, None, duration_days)
-            # DM user the key
-            user = await bot.fetch_user(user_id)
-            if user:
-                await user.send(f"✅ Your {plan} key: `{key}`\nThank you for your payment!")
-    except Exception as e:
-        print(f"NOWPayments IPN error: {e}")
-
-if __name__ == "__main__":
-    PORT = int(os.getenv("PORT", "10000"))
-    def run_health_server():
-        with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), HealthCheckHandler) as server:
-            print(f"🌐 Health check server started on port {PORT}")
-            server.serve_forever()
-    threading.Thread(target=run_health_server, daemon=True).start()
-
-    print("🚀 Starting Discord Bot...")
-    bot.run(BOT_TOKEN)
+```
