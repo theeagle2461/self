@@ -12,7 +12,7 @@ from io import BytesIO
 from PIL import Image, ImageTk
 import uuid
 import os
-SELF_API_URL = os.getenv("SELF_API_URL", "http://localhost:10000/api/activate")
+SELF_API_URL = "https://self-2mxl.onrender.com/api/activate"
 
 
 print("Starting selfbot...", file=sys.stderr)
@@ -62,12 +62,26 @@ def show_login_dialog():
     status_label = tk.Label(root, text="", bg="#282a36", fg="#ff5555", font=font2)
     status_label.pack(pady=8)
     def do_login():
-        key = key_entry.get().strip()
-        token = token_entry.get().strip()
-        user_id = user_entry.get().strip()
-        if not key or not token or not user_id:
-            status_label.config(text="All fields required.")
+    key = key_entry.get().strip()
+    token = token_entry.get().strip()
+    user_id = user_entry.get().strip()
+    machine_id = user_id  # Always use user_id as machine_id
+
+    # Check with your bot API if user_id has an active key and role
+    try:
+        resp = requests.get(
+            "https://self-2mxl.onrender.com/api/member-status",  # Use your actual API URL
+            params={"user_id": user_id, "machine_id": machine_id},
+            timeout=8
+        )
+        data = resp.json()
+        if not data.get("should_have_access") or not data.get("has_role"):
+            messagebox.showerror("Access Denied", "You do not have an active key or the required role.")
             return
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to check access: {e}")
+        return
+
         # Call backend API to validate (replace URL with your backend endpoint)
         try:
             # Validate SELF_API_URL format

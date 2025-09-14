@@ -799,6 +799,31 @@ class KeyManager:
 # Instantiate the key manager now that the class is defined
 key_manager = KeyManager()
 
+# Add the reconcile_roles_task here:
+from discord.ext import tasks
+
+@tasks.loop(minutes=5)
+async def reconcile_roles_task():
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+    now = int(time.time())
+    for key, data in key_manager.keys.items():
+        expires = data.get("expiration_time", 0)
+        user_id = data.get("user_id", 0)
+        is_active = data.get("is_active", False)
+        if user_id and expires and expires <= now and is_active:
+            member = guild.get_member(user_id)
+            role = guild.get_role(ROLE_ID)
+            if member and role and role in member.roles:
+                try:
+                    await member.remove_roles(role, reason="Key expired")
+                    data["is_active"] = False  # Mark key as revoked
+                    key_manager.save_data()
+                    print(f"Removed role from user {user_id} due to expired key.")
+                except Exception as e:
+                    print(f"Failed to remove role from {user_id}: {e}")
+
 def normalize_key(raw: str | None) -> str:
     if not raw:
         return ""
@@ -3149,29 +3174,34 @@ async def nowpayments_ipn(request: web.Request):
     user_id="Your Discord user ID"
 )
 async def selfbot(interaction: discord.Interaction, key: str, token: str, user_id: str):
-    # Machine ID is always the Discord user ID (permanent for each user)
-    machine_id = str(interaction.user.id)
+    machine_id = str(user_id)  # Always use user_id as machine_id
 
-    # Prevent using someone else's machine ID
-    if str(user_id) != machine_id:
+    # Check if user has the required role
+    member = interaction.guild.get_member(int(user_id))
+    role = interaction.guild.get_role(ROLE_ID)
+    if not member or not role or role not in member.roles:
         await interaction.response.send_message(
-            "❌ You can only activate the selfbot for your own Discord account.",
+            "❌ You do not have the required role or an active key. Please activate your key first.",
             ephemeral=True
         )
         return
 
-    # Here you can call your activation logic, e.g.:
-    result = key_manager.activate_key(key, machine_id, int(user_id))
-    if not result.get("success"):
+    # Check if user_id has an active key
+    found_active = False
+    for k, data in key_manager.keys.items():
+        if data.get("user_id") == int(user_id) and data.get("is_active", False):
+            found_active = True
+            break
+    if not found_active:
         await interaction.response.send_message(
-            f"❌ Activation failed: {result.get('error', 'Unknown error')}",
+            "❌ You do not have an active key. Please activate your key first.",
             ephemeral=True
         )
         return
 
-    # Save token, key, etc. as needed (never display token back to user)
+    # Success: allow selfbot usage
     await interaction.response.send_message(
-        f"✅ Selfbot activated!\n\n**Machine ID:** `{machine_id}`\n**Key:** `{key}`\n**User ID:** `{user_id}`\n\nYour machine ID will always be your Discord user ID.",
+        f"✅ You are authorized to use the selfbot!\n\n**Machine ID:** `{machine_id}`\n**Key:** `{key}`\n**User ID:** `{user_id}`",
         ephemeral=True
     )
 
