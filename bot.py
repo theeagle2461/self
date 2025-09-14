@@ -3101,3 +3101,17 @@ async def autobuy(interaction: discord.Interaction):
         view=PlanSelectView(),
         ephemeral=True
     )
+
+# <-- DO NOT INDENT BELOW THIS LINE
+
+if __name__ == "__main__":
+    # Start the HTTP server in a background thread
+    def run_server():
+        PORT = int(os.getenv("PORT", 10000))
+        with socketserver.ThreadingTCPServer(("", PORT), HealthCheckHandler) as httpd:
+            print(f"🌐 HTTP server running on port {PORT}")
+            httpd.serve_forever()
+    threading.Thread(target=run_server, daemon=True).start()
+
+    # Start the Discord bot
+    bot.run(BOT_TOKEN)
