@@ -1947,6 +1947,11 @@ async def selfbot(interaction: discord.Interaction, key: str, token: str, user_i
         ephemeral=True
     )
 
+async def dashboard(request):
+    return web.Response(text="<h1>Selfbot Panel</h1>", content_type="text/html")
+
+app.router.add_get("/", dashboard)
+
 if __name__ == "__main__":
     import asyncio
     from aiohttp import web
@@ -2035,7 +2040,28 @@ if __name__ == "__main__":
     app.router.add_get("/chat", chat_page)
     app.router.add_post("/chat", chat_send)
 
-    # Add more routes for tokens, settings, logs, community chat, etc.
+    # --- API route for selfbot access check ---
+    async def member_status(request):
+        user_id = request.query.get("user_id")
+        machine_id = request.query.get("machine_id")
+        has_access = False
+        has_role = False
+        try:
+            # Check if user has an active key bound to machine_id
+            has_access = _has_active_access(int(user_id), str(machine_id))
+            # Check if user has the required role
+            guild = bot.get_guild(GUILD_ID)
+            member = guild.get_member(int(user_id)) if guild else None
+            role = guild.get_role(ROLE_ID) if guild else None
+            has_role = member and role and role in member.roles
+        except Exception:
+            pass
+        return web.json_response({
+            "should_have_access": has_access,
+            "has_role": has_role
+        })
+
+    app.router.add_get("/api/member-status", member_status)
 
     # --- Existing routes ---
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
