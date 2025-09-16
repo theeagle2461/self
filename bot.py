@@ -1959,8 +1959,13 @@ if __name__ == "__main__":
     app = web.Application()
 
     # --- Selfbot Web Panel Routes ---
+    # (all your async route functions here)
+    # Example:
+    async def dashboard(request):
+        return web.Response(text="<h1>Selfbot Panel</h1>", content_type="text/html")
+    app.router.add_get("/", dashboard)
 
-    # Login page (collects key, token, user_id, machine_id)
+    # ...other routes...
     async def login_page(request):
         html = """
         <html>
@@ -1993,27 +1998,6 @@ if __name__ == "__main__":
     app.router.add_get("/login", login_page)
     app.router.add_post("/login", login_submit)
 
-    # Dashboard (after login)
-    async def dashboard(request):
-        html = """
-        <html>
-        <head><title>Selfbot Dashboard</title></head>
-        <body>
-            <h2>Welcome to the Selfbot Panel</h2>
-            <ul>
-                <li><a href="/chat">Send Message</a></li>
-                <li><a href="/tokens">Manage Tokens</a></li>
-                <li><a href="/settings">Settings</a></li>
-                <li><a href="/logs">Logs</a></li>
-                <li><a href="/community">Community Chat</a></li>
-            </ul>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type="text/html")
-    app.router.add_get("/", dashboard)
-
-    # Example: Message sender page
     async def chat_page(request):
         html = """
         <html>
@@ -2040,7 +2024,6 @@ if __name__ == "__main__":
     app.router.add_get("/chat", chat_page)
     app.router.add_post("/chat", chat_send)
 
-    # --- API route for selfbot access check ---
     async def member_status(request):
         user_id = request.query.get("user_id")
         machine_id = request.query.get("machine_id")
@@ -2063,7 +2046,6 @@ if __name__ == "__main__":
 
     app.router.add_get("/api/member-status", member_status)
 
-    # --- Existing routes ---
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
 
     runner = web.AppRunner(app)
