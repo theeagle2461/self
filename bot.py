@@ -1947,11 +1947,6 @@ async def selfbot(interaction: discord.Interaction, key: str, token: str, user_i
         ephemeral=True
     )
 
-async def dashboard(request):
-    return web.Response(text="<h1>Selfbot Panel</h1>", content_type="text/html")
-
-app.router.add_get("/", dashboard)
-
 if __name__ == "__main__":
     import asyncio
     from aiohttp import web
@@ -1959,13 +1954,13 @@ if __name__ == "__main__":
     app = web.Application()
 
     # --- Selfbot Web Panel Routes ---
-    # (all your async route functions here)
-    # Example:
+
+    # Dashboard (homepage)
     async def dashboard(request):
         return web.Response(text="<h1>Selfbot Panel</h1>", content_type="text/html")
     app.router.add_get("/", dashboard)
 
-    # ...other routes...
+    # Login page
     async def login_page(request):
         html = """
         <html>
@@ -1983,7 +1978,9 @@ if __name__ == "__main__":
         </html>
         """
         return web.Response(text=html, content_type="text/html")
+    app.router.add_get("/login", login_page)
 
+    # Login submit (placeholder)
     async def login_submit(request):
         data = await request.post()
         key = data.get("key")
@@ -1991,13 +1988,10 @@ if __name__ == "__main__":
         user_id = data.get("user_id")
         machine_id = data.get("machine_id")
         # TODO: Validate key, token, user_id, machine_id
-        # You can call your /api/activate endpoint here
-        # Save session/cookie for logged-in user
         return web.Response(text="Logged in! (feature not fully implemented)", content_type="text/html")
-
-    app.router.add_get("/login", login_page)
     app.router.add_post("/login", login_submit)
 
+    # Message sender page
     async def chat_page(request):
         html = """
         <html>
@@ -2013,6 +2007,7 @@ if __name__ == "__main__":
         </html>
         """
         return web.Response(text=html, content_type="text/html")
+    app.router.add_get("/chat", chat_page)
 
     async def chat_send(request):
         data = await request.post()
@@ -2020,10 +2015,9 @@ if __name__ == "__main__":
         message = data.get("message")
         # TODO: Use Discord API with user's token to send message
         return web.Response(text=f"Sent message to {channel_id}: {message}", content_type="text/html")
-
-    app.router.add_get("/chat", chat_page)
     app.router.add_post("/chat", chat_send)
 
+    # --- API route for selfbot access check ---
     async def member_status(request):
         user_id = request.query.get("user_id")
         machine_id = request.query.get("machine_id")
@@ -2043,10 +2037,13 @@ if __name__ == "__main__":
             "should_have_access": has_access,
             "has_role": has_role
         })
-
     app.router.add_get("/api/member-status", member_status)
 
+    # --- Existing routes ---
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
+    app.router.add_post("/coinbase-webhook", coinbase_webhook)
+
+    # Add more routes for tokens, settings, logs, community chat, etc. as needed
 
     runner = web.AppRunner(app)
     loop = asyncio.get_event_loop()
