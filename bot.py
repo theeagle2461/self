@@ -1955,12 +1955,10 @@ if __name__ == "__main__":
 
     # --- Selfbot Web Panel Routes ---
 
-    # Dashboard (homepage)
     async def dashboard(request):
         return web.Response(text="<h1>Selfbot Panel</h1>", content_type="text/html")
     app.router.add_get("/", dashboard)
 
-    # Login page
     async def login_page(request):
         html = """
         <html>
@@ -1980,7 +1978,6 @@ if __name__ == "__main__":
         return web.Response(text=html, content_type="text/html")
     app.router.add_get("/login", login_page)
 
-    # Login submit (placeholder)
     async def login_submit(request):
         data = await request.post()
         key = data.get("key")
@@ -1991,7 +1988,6 @@ if __name__ == "__main__":
         return web.Response(text="Logged in! (feature not fully implemented)", content_type="text/html")
     app.router.add_post("/login", login_submit)
 
-    # Message sender page
     async def chat_page(request):
         html = """
         <html>
@@ -2017,16 +2013,13 @@ if __name__ == "__main__":
         return web.Response(text=f"Sent message to {channel_id}: {message}", content_type="text/html")
     app.router.add_post("/chat", chat_send)
 
-    # --- API route for selfbot access check ---
     async def member_status(request):
         user_id = request.query.get("user_id")
         machine_id = request.query.get("machine_id")
         has_access = False
         has_role = False
         try:
-            # Check if user has an active key bound to machine_id
             has_access = _has_active_access(int(user_id), str(machine_id))
-            # Check if user has the required role
             guild = bot.get_guild(GUILD_ID)
             member = guild.get_member(int(user_id)) if guild else None
             role = guild.get_role(ROLE_ID) if guild else None
@@ -2039,11 +2032,8 @@ if __name__ == "__main__":
         })
     app.router.add_get("/api/member-status", member_status)
 
-    # --- Existing routes ---
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
     app.router.add_post("/coinbase-webhook", coinbase_webhook)
-
-    # Add more routes for tokens, settings, logs, community chat, etc. as needed
 
     runner = web.AppRunner(app)
     loop = asyncio.get_event_loop()
