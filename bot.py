@@ -38,7 +38,7 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # Configuration
 GUILD_ID = int(os.getenv('GUILD_ID', '1402622761246916628') or 0)
-ROLE_ID = 1404221578782183556
+ROLE_ID = int(os.getenv('ROLE_ID', '1404221578782183556'))
 ROLE_NAME = os.getenv('ROLE_NAME', 'activated key')
 OWNER_ROLE_ID = int(os.getenv('OWNER_ROLE_ID', '1402650246538072094') or 0)
 CHATSEND_ROLE_ID = int(os.getenv('CHATSEND_ROLE_ID', '1406339861593591900') or 0)
