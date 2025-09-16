@@ -2017,22 +2017,23 @@ if __name__ == "__main__":
     app.router.add_post("/chat", chat_send)
 
     async def member_status(request):
-        user_id = request.query.get("user_id")
-        machine_id = request.query.get("machine_id")
-        has_access = False
-        has_role = False
-        try:
-            has_access = _has_active_access(int(user_id), str(machine_id))
-            guild = bot.get_guild(GUILD_ID)
-            member = guild.get_member(int(user_id)) if guild else None
-            role = guild.get_role(ROLE_ID) if guild else None
-            has_role = member and role and role in member.roles
-        except Exception:
-            pass
-        return web.json_response({
-            "should_have_access": has_access,
-            "has_role": has_role
-        })
+    user_id = request.query.get("user_id")
+    machine_id = request.query.get("machine_id")
+    has_access = False
+    has_role = False
+    try:
+        has_access = _has_active_access(int(user_id), str(machine_id))
+        guild = bot.get_guild(GUILD_ID)
+        member = guild.get_member(int(user_id)) if guild else None
+        role = guild.get_role(ROLE_ID) if guild else None
+        print(f"DEBUG: user_id={user_id}, machine_id={machine_id}, has_access={has_access}, member={member}, role={role}, member_roles={[r.id for r in member.roles] if member else None}")
+        has_role = member and role and role in member.roles
+    except Exception:
+        pass
+    return web.json_response({
+        "should_have_access": has_access,
+        "has_role": has_role
+    })
     app.router.add_get("/api/member-status", member_status)
 
     app.router.add_post("/nowpayments-ipn", nowpayments_ipn)
