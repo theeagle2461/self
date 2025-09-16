@@ -6,10 +6,10 @@ except Exception:  # pragma: no cover
     except Exception:
         audioop = None
 
+import audioop
 import discord
 from discord import app_commands, ui
-from discord.ext import commands
-from discord.ext import tasks
+from discord.ext import commands, tasks
 import json
 import uuid
 import time
@@ -24,7 +24,7 @@ import requests
 import urllib.parse
 import html
 import io
-import aiohttp
+import threading
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -1621,7 +1621,6 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ An error occurred: {str(error)}")
 
 # Coinbase Commerce webhook handler
-from aiohttp import web
 
 async def coinbase_webhook(request: web.Request):
     try:
