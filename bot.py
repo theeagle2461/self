@@ -1950,9 +1950,14 @@ async def selfbot(interaction: discord.Interaction, key: str, token: str, user_i
     )
 
 if __name__ == "__main__":
-    app = web.Application()
+    def run_bot():
+        bot.run(BOT_TOKEN)
+
+    threading.Thread(target=run_bot, daemon=True).start()
 
     # --- Selfbot Web Panel Routes ---
+
+    app = web.Application()
 
     async def dashboard(request):
         return web.Response(text="<h1>Selfbot Panel</h1>", content_type="text/html")
@@ -2039,6 +2044,4 @@ if __name__ == "__main__":
     loop.run_until_complete(runner.setup())
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
     loop.run_until_complete(site.start())
-
-    # Start the Discord bot
-    bot.run(BOT_TOKEN)
+    loop.run_forever()
