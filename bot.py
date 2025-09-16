@@ -15,6 +15,8 @@ import uuid
 import time
 import datetime
 import asyncio
+import aiohttp
+from aiohttp import web
 import os
 from typing import Optional, Dict, List
 import aiofiles
@@ -1948,9 +1950,6 @@ async def selfbot(interaction: discord.Interaction, key: str, token: str, user_i
     )
 
 if __name__ == "__main__":
-    import asyncio
-    from aiohttp import web
-
     app = web.Application()
 
     # --- Selfbot Web Panel Routes ---
