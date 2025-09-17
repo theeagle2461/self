@@ -918,7 +918,8 @@ async def on_ready():
             except Exception:
                 pass
 
-if AUTO_RESTORE_ON_START and BACKUP_CHANNEL_ID > 0:
+    # Auto-restores from the most recent JSON attachment in backup channel
+    if AUTO_RESTORE_ON_START and BACKUP_CHANNEL_ID > 0:
         try:
             channel = bot.get_channel(BACKUP_CHANNEL_ID)
             if channel:
