@@ -25,6 +25,7 @@ import urllib.parse
 import html
 import io
 import threading
+from io import BytesIO
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -809,7 +810,7 @@ async def upload_backup_snapshot(payload):
         await channel.send(content="🔄 Keys backup snapshot", file=discord_file)
     except Exception as e:
         print(f"Error sending backup to channel: {e}")
-        
+
 # Add the reconcile_roles_task here:
 from discord.ext import tasks
 
