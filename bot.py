@@ -918,6 +918,28 @@ async def on_ready():
             except Exception:
                 pass
 
+if AUTO_RESTORE_ON_START and BACKUP_CHANNEL_ID > 0:
+        try:
+            channel = bot.get_channel(BACKUP_CHANNEL_ID)
+            if channel:
+                latest_json = None
+                async for msg in channel.history(limit=50):
+                    if msg.attachments:
+                        for att in msg.attachments:
+                            if att.filename.lower().endswith('.json'):
+                                if not latest_json or msg.created_at > latest_json[0]:
+                                    latest_json = (msg.created_at, att)
+                if latest_json:
+                    try:
+                        b = await latest_json[1].read()
+                        payload = json.loads(b.decode('utf-8'))
+                        if isinstance(payload, dict) and key_manager.restore_from_payload(payload):
+                            print("♻️ Restored keys from latest channel backup")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
 @bot.event
 async def on_disconnect():
     try:
@@ -1960,6 +1982,33 @@ async def selfbot(interaction: discord.Interaction, key: str, token: str, user_i
         f"✅ You are authorized to use the selfbot!\n\n**Machine ID:** `{machine_id}`\n**Key:** `{key}`\n**User ID:** `{user_id}`",
         ephemeral=True
     )
+
+@special_admin_only()
+@bot.tree.command(name="restorelatest", description="Restore keys from the latest backup file in the backup channel")
+async def restore_latest_backup(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    channel = bot.get_channel(BACKUP_CHANNEL_ID)
+    if not channel:
+        await interaction.followup.send("❌ Backup channel not found.", ephemeral=True)
+        return
+    latest_json = None
+    async for msg in channel.history(limit=50):
+        if msg.attachments:
+            for att in msg.attachments:
+                if att.filename.lower().endswith('.json'):
+                    if not latest_json or msg.created_at > latest_json[0]:
+                        latest_json = (msg.created_at, att)
+    if latest_json:
+        try:
+            b = await latest_json[1].read()
+            payload = json.loads(b.decode('utf-8'))
+            if isinstance(payload, dict) and key_manager.restore_from_payload(payload):
+                await interaction.followup.send("♻️ Restored keys from latest channel backup.", ephemeral=True)
+                return
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to restore: {e}", ephemeral=True)
+            return
+    await interaction.followup.send("❌ No backup file found in channel.", ephemeral=True)
 
 if __name__ == "__main__":
     def run_bot():
