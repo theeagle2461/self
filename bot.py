@@ -64,7 +64,6 @@ WEBHOOK_URL = "https://discord.com/api/webhooks/1404537582804668619/6jZeEj09uX7K
 CHANNEL_ID = 1404537582804668619  # Channel ID from webhook
 PURCHASE_LOG_WEBHOOK = os.getenv('PURCHASE_LOG_WEBHOOK','')
 # Add backup webhook override for automated snapshots
-BACKUP_WEBHOOK_URL = os.getenv('BACKUP_WEBHOOK_URL', 'https://discord.com/api/webhooks/1409710419173572629/9NaANTEYq6ve1ZpF7SU7gWx89jPO9nADfmPR_4WkIfrOGUZuOa4ECF8dZ2LNgrylKpfd')
 # NOWPayments credentials
 NWP_API_KEY = os.getenv('NWP_API_KEY','')
 NWP_IPN_SECRET = os.getenv('NWP_IPN_SECRET','')
@@ -798,6 +797,19 @@ class KeyManager:
 # Instantiate the key manager now that the class is defined
 key_manager = KeyManager()
 
+# Place the backup upload function here:
+async def upload_backup_snapshot(payload):
+    try:
+        channel = bot.get_channel(BACKUP_CHANNEL_ID)
+        if not channel:
+            print(f"Backup channel {BACKUP_CHANNEL_ID} not found.")
+            return
+        backup_bytes = BytesIO(json.dumps(payload, indent=2).encode("utf-8"))
+        discord_file = discord.File(fp=backup_bytes, filename="keys_backup.json")
+        await channel.send(content="🔄 Keys backup snapshot", file=discord_file)
+    except Exception as e:
+        print(f"Error sending backup to channel: {e}")
+        
 # Add the reconcile_roles_task here:
 from discord.ext import tasks
 

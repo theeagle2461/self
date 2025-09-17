@@ -60,68 +60,33 @@ def show_login_dialog():
     user_entry.pack(pady=4)
     status_label = tk.Label(root, text="", bg="#282a36", fg="#ff5555", font=font2)
     status_label.pack(pady=8)
+
     def do_login():
-    key = key_entry.get().strip()
-    token = token_entry.get().strip()
-    user_id = user_id_entry.get().strip()
-    machine_id = user_id  # Always use user_id as machine_id
+        key = key_entry.get().strip()
+        token = token_entry.get().strip()
+        user_id = user_entry.get().strip()
+        machine_id = user_id  # Always use user_id as machine_id
 
-    # Check with your bot API if user_id has an active key and role
-    try:
-        resp = requests.get(
-            "https://self-2mxl.onrender.com/api/member-status",
-            params={"user_id": user_id, "machine_id": machine_id},
-            timeout=8
-        )
-        data = resp.json()
-        if not data.get("should_have_access") or not data.get("has_role"):
-            messagebox.showerror("Access Denied", "You do not have an active key or the required role.")
-            return  # Prevents opening the selfbot panel
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to check access: {e}")
-        return  # Prevents opening the selfbot panel
-
-    # Only open the main selfbot panel if login is successful
-    open_main_panel()
-
-        # Call backend API to validate (replace URL with your backend endpoint)
+        # Check with your bot API if user_id has an active key and role
         try:
-            # Validate SELF_API_URL format
-            url_pattern = r"^https?://[\w\.-]+(:\d+)?/api/activate$"
-            if not re.match(url_pattern, SELF_API_URL):
-                status_label.config(text=f"Invalid backend URL: {SELF_API_URL}")
-                with open("selfbot_login_error.txt", "w") as f:
-                    f.write(f"Invalid backend URL: {SELF_API_URL}")
-                return
-            resp = requests.post(
-                SELF_API_URL,
-                data={"key": key, "user_id": user_id, "machine_id": machine_id},
+            resp = requests.get(
+                "https://self-2mxl.onrender.com/api/member-status",
+                params={"user_id": user_id, "machine_id": machine_id},
                 timeout=8
             )
-            if resp.status_code == 200 and resp.json().get("success"):
-                save_login_info({"key": key, "token": token, "user_id": user_id, "machine_id": machine_id})
-                root.destroy()
-            else:
-                error_msg = resp.json().get("error", "Login failed.")
-                if "already activated" in error_msg:
-                    bound_user = resp.json().get("bound_user_id", user_id)
-                    status_label.config(text=f"Key has already been activated and is bound to user ({bound_user})")
-                else:
-                    status_label.config(text=error_msg)
-                with open("selfbot_login_error.txt", "w") as f:
-                    f.write(error_msg)
-        except requests.exceptions.ConnectionError:
-            status_label.config(text="Could not connect to backend. Make sure the bot server is running on port 10000.")
-            with open("selfbot_login_error.txt", "w") as f:
-                f.write("Could not connect to backend.")
-        except requests.exceptions.Timeout:
-            status_label.config(text="Backend request timed out.")
-            with open("selfbot_login_error.txt", "w") as f:
-                f.write("Backend request timed out.")
+            data = resp.json()
+            if not data.get("should_have_access") or not data.get("has_role"):
+                messagebox.showerror("Access Denied", "You do not have an active key or the required role.")
+                return
         except Exception as e:
-            status_label.config(text=str(e))
-            with open("selfbot_login_error.txt", "w") as f:
-                f.write(str(e))
+            messagebox.showerror("Error", f"Failed to check access: {e}")
+            return
+
+        # Only open the main selfbot panel if login is successful
+        save_login_info({"key": key, "token": token, "user_id": user_id, "machine_id": machine_id})
+        root.destroy()
+        main()  # Start the main GUI
+
     tk.Button(root, text="Login", command=do_login, font=font1, bg="#ff79c6", fg="#282a36").pack(pady=12)
     root.mainloop()
 
